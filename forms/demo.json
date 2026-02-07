@@ -1,0 +1,43 @@
+{
+  "id": "demo",
+  "title": "Reference POC Collection (Loop Demo)",
+  "targetCount": 2,
+  "fields": [
+    {
+      "id": "ref_name",
+      "type": "text",
+      "label": "What is your reference's full name?",
+      "required": true
+    },
+    {
+      "id": "ref_email",
+      "type": "text",
+      "label": "What is their email?",
+      "required": true,
+      "validation": { "kind": "email" }
+    },
+    {
+      "id": "ref_relationship",
+      "type": "select",
+      "label": "How do you know them?",
+      "required": true,
+      "options": [
+        "Former manager",
+        "Colleague",
+        "Direct report",
+        "Client",
+        "Professor",
+        "Friend",
+        "Family",
+        "Other"
+      ]
+    },
+    {
+      "id": "ref_relationship_explanation",
+      "type": "text",
+      "label": "Briefly describe your relationship (optional).",
+      "required": false
+    }
+  ]
+}
+
