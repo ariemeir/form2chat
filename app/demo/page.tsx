@@ -78,26 +78,31 @@ function deriveCollected(thread: ThreadMsg[]) {
   return pairs;
 }
 
-async function postJson<T>(url: string, body: any): Promise<T> {
+async function postJson<T>(path: string, body: any): Promise<T> {
+
+  // HARD normalize URL to same-origin
+  const url =
+    typeof window !== "undefined"
+      ? new URL(path, window.location.origin).toString()
+      : path;
+
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify(body),
   });
 
-  const contentType = res.headers.get("content-type") || "";
   const text = await res.text();
 
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} ${url}: ${text.slice(0, 200)}`);
   }
 
-  if (contentType.includes("application/json")) {
-    return JSON.parse(text) as T;
-  }
-
   return JSON.parse(text) as T;
 }
+
 
 export default function DemoPage() {
   const [formId, setFormId] = useState<string>("demo");
