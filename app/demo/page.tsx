@@ -112,13 +112,20 @@ export default function DemoPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [showCollected, setShowCollected] = useState(true);
+  // hidden by default; auto-forced on during review
+  const [showCollected, setShowCollected] = useState(false);
+
+  // restart from beginning by re-running /api/chat/start
+  const [restartNonce, setRestartNonce] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
 
   const collected = useMemo(() => deriveCollected(thread), [thread]);
+
+  const isReview = bot?.kind === "review";
+  const isDone = bot?.kind === "done";
 
   // Stick-to-bottom unless the user scrolls up.
   useEffect(() => {
@@ -128,7 +135,6 @@ export default function DemoPage() {
     const onScroll = () => {
       const distanceFromBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight;
-      // If user scrolls up, stop auto-following; if they return near bottom, re-enable.
       setStickToBottom(distanceFromBottom < 80);
     };
 
@@ -176,6 +182,7 @@ export default function DemoPage() {
       setThread([]);
       setBot(null);
       setSessionId(null);
+      setShowCollected(false);
 
       setThread([{ id: uid(), role: "typing" }]);
 
@@ -211,7 +218,58 @@ export default function DemoPage() {
     return () => {
       cancelled = true;
     };
-  }, [formId]);
+  }, [formId, restartNonce]);
+
+  function restartFromBeginning() {
+    setRestartNonce((n) => n + 1);
+  }
+
+  async function submit() {
+    const sid = sessionId ?? bot?.sessionId;
+    if (!sid) return;
+
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setIsSending(true);
+    setError(null);
+
+    appendTyping();
+
+    try {
+      const res = await postJson<any>("/api/submit", {
+        formId,
+        sessionId: sid,
+      });
+
+      // Try a few common shapes; fall back to entire response.
+      const submitted =
+        res?.submitted ?? res?.data ?? res?.answers ?? res ?? { ok: true };
+
+      await sleep(randomDelay("done"));
+
+      setThread((prev) => {
+        const withoutTyping = prev.filter((m) => m.role !== "typing");
+        return [
+          ...withoutTyping,
+          {
+            id: uid(),
+            role: "agent",
+            text:
+              "✅ Submitted. Here’s what I captured:\n\n" +
+              JSON.stringify(submitted, null, 2),
+          },
+        ];
+      });
+
+      setBot({ kind: "done", sessionId: sid, message: "Submitted." });
+    } catch (e: any) {
+      setThread((prev) => prev.filter((m) => m.role !== "typing"));
+      setError(e?.message ?? "Failed to submit");
+    } finally {
+      sendingRef.current = false;
+      setIsSending(false);
+    }
+  }
 
   async function sendText(text: string) {
     const sid = sessionId ?? bot?.sessionId;
@@ -359,7 +417,7 @@ export default function DemoPage() {
 
             <button
               type="button"
-              onClick={() => void sendText("restart")}
+              onClick={restartFromBeginning}
               style={styles.smallBtn}
               disabled={isSending}
             >
@@ -368,7 +426,7 @@ export default function DemoPage() {
           </div>
         </div>
 
-        {showCollected && collected.length > 0 && (
+        {(isReview || showCollected) && collected.length > 0 && (
           <div style={styles.collectedPanel}>
             <div style={styles.collectedTitle}>Collected so far</div>
             <div style={styles.collectedList}>
@@ -408,13 +466,18 @@ export default function DemoPage() {
             }
 
             if (m.role === "agent") {
+              const agentText =
+                isReview && isLast
+                  ? "To quickly review, does everything look right?"
+                  : m.text;
+
               return (
                 <div key={m.id} style={styles.rowLeft}>
                   <div style={styles.avatarColumn}>
                     <div style={styles.agentAvatarSmall}>A</div>
                   </div>
                   <div style={styles.bubbleAgent}>
-                    <div style={styles.bubbleText}>{m.text}</div>
+                    <div style={styles.bubbleText}>{agentText}</div>
 
                     {/* Choices for ask */}
                     {showChoiceButtons && isLast && (
@@ -467,24 +530,24 @@ export default function DemoPage() {
                       </div>
                     )}
 
-                    {/* YES/NO buttons for review */}
+                    {/* Submit/Restart buttons for review */}
                     {showReviewButtons && isLast && (
                       <div style={styles.choices}>
                         <button
                           type="button"
-                          onClick={() => void sendText("yes")}
+                          onClick={() => void submit()}
                           style={styles.choiceBtn}
                           disabled={isSending}
                         >
-                          Yes, submit
+                          Submit
                         </button>
                         <button
                           type="button"
-                          onClick={() => void sendText("no")}
+                          onClick={restartFromBeginning}
                           style={styles.choiceBtn}
                           disabled={isSending}
                         >
-                          No, edit
+                          Restart
                         </button>
                       </div>
                     )}
@@ -512,18 +575,18 @@ export default function DemoPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={
-              bot?.kind === "done"
+              isDone
                 ? "Done"
                 : showFileUpload
                 ? "Use Upload file above"
                 : showChoiceButtons
                 ? "Tap an option above or type…"
                 : showReviewButtons
-                ? "Type YES to submit or NO to edit…"
+                ? "Review above"
                 : "Type your reply…"
             }
             style={styles.input}
-            disabled={isSending || bot?.kind === "done" || showFileUpload}
+            disabled={isSending || isDone || isReview || showFileUpload}
             autoComplete="off"
           />
           <button
@@ -531,13 +594,13 @@ export default function DemoPage() {
             style={{
               ...styles.sendBtn,
               opacity:
-                isSending || bot?.kind === "done" || showFileUpload ? 0.5 : 1,
+                isSending || isDone || isReview || showFileUpload ? 0.5 : 1,
               cursor:
-                isSending || bot?.kind === "done" || showFileUpload
+                isSending || isDone || isReview || showFileUpload
                   ? "not-allowed"
                   : "pointer",
             }}
-            disabled={isSending || bot?.kind === "done" || showFileUpload}
+            disabled={isSending || isDone || isReview || showFileUpload}
           >
             Send
           </button>
