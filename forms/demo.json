@@ -22,14 +22,12 @@
       "label": "How do you know them?",
       "required": true,
       "options": [
-        "Former manager",
-        "Colleague",
-        "Direct report",
-        "Client",
-        "Professor",
-        "Friend",
-        "Family",
-        "Other"
+        "supervisor",
+        "client",
+        "coworker",
+        "friend",
+        "family",
+        "other"
       ]
     },
     {
