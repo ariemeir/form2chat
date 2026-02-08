@@ -603,7 +603,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#111",  
   },
   userBubble: {
-    background: "#111",
+    background: "#fff",
     borderRadius: 14,
     padding: "10px 12px",
     maxWidth: "78%",
