@@ -145,7 +145,7 @@ function validate(field: Field, raw: string): { ok: true; value: any } | { ok: f
     return { ok: true, value: raw };
   }
 
-  if (field.validation?.kind === "email") {
+  if (field.type === "text" && field.validation?.kind === "email") {
     const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw.trim());
     if (!ok) return { ok: false, error: "Please enter a valid email address." };
     return { ok: true, value: raw.trim() };
