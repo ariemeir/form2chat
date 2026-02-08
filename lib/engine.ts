@@ -49,20 +49,26 @@ type EngineState = {
 function parseState(json: string): EngineState {
   try {
     const o = JSON.parse(json || "{}");
+
     // Back-compat: if old flat answers exist, treat as draft
     if (!o.__refs && !o.__draft) {
       return { __refs: [], __draft: { ...(o || {}) } };
     }
-    return {
-      __refs: Array.isArray(o.__refs) ? o.__refs : [],
-      __draft: o.__draft && typeof o.__draft === "object" ? o.__draft : {},
-    };
+
+    if (o && typeof o === "object") {
+      return {
+        __refs: Array.isArray(o.__refs) ? o.__refs : [],
+        __draft: o.__draft && typeof o.__draft === "object" ? o.__draft : {},
+      };
+    }
+
+    return { __refs: [], __draft: {} };
   } catch {
     return { __refs: [], __draft: {} };
   }
 }
 
-function saveState(sessionId: string, fieldIndex: number, state: EngineState, status: string = "in_progress") {
+function saveState(sessionId: string, fieldIndex: number, state: EngineState, status: "in_progress" | "submitted") {
   db.prepare("UPDATE sessions SET field_index = ?, answers_json = ?, status = ?, updated_at = ? WHERE id = ?").run(
     fieldIndex,
     JSON.stringify(state),
@@ -118,53 +124,36 @@ function validate(field: Field, raw: string): { ok: true; value: any } | { ok: f
   const required = !!field.required;
 
   if (field.type !== "file" && required && raw.trim() === "") {
-    return { ok: false, error: "I need something here — can you enter a value?" };
-  }
-
-  if (field.type === "text") {
-    if (field.validation?.kind === "email") {
-      const v = raw.trim();
-      const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-      if (!emailOk) return { ok: false, error: "That doesn’t look like an email. Can you try again?" };
-      return { ok: true, value: v };
-    }
-    return { ok: true, value: raw.trim() };
+    return { ok: false, error: "Please enter a value." };
   }
 
   if (field.type === "number") {
     const n = Number(raw);
-    if (!Number.isFinite(n)) return { ok: false, error: "Can you enter a number?" };
-    if (field.validation?.min != null && n < field.validation.min)
-      return { ok: false, error: `Please enter a number ≥ ${field.validation.min}.` };
-    if (field.validation?.max != null && n > field.validation.max)
-      return { ok: false, error: `Please enter a number ≤ ${field.validation.max}.` };
+    if (Number.isNaN(n)) return { ok: false, error: "Please enter a valid number." };
     return { ok: true, value: n };
   }
 
   if (field.type === "date") {
-    const t = Date.parse(raw);
-    if (Number.isNaN(t)) return { ok: false, error: "Can you enter a date (or use the date picker)?" };
-    return { ok: true, value: new Date(t).toISOString().slice(0, 10) };
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return { ok: false, error: "Please enter a valid date." };
+    return { ok: true, value: raw };
   }
 
   if (field.type === "select" || field.type === "radio") {
-    const options = field.options ?? [];
-    const normalized = raw.trim().toLowerCase();
-
-    const idx = Number(normalized);
-    if (Number.isInteger(idx) && idx >= 1 && idx <= options.length) {
-      return { ok: true, value: options[idx - 1] };
-    }
-
-    const match = options.find((o) => o.toLowerCase() === normalized);
-    if (!match) return { ok: false, error: `Pick one of: ${options.join(", ")}.` };
-    return { ok: true, value: match };
+    const opts = field.options ?? [];
+    if (!opts.includes(raw)) return { ok: false, error: "Please choose one of the options." };
+    return { ok: true, value: raw };
   }
 
-  return { ok: true, value: raw.trim() };
+  if (field.validation?.kind === "email") {
+    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw.trim());
+    if (!ok) return { ok: false, error: "Please enter a valid email address." };
+    return { ok: true, value: raw.trim() };
+  }
+
+  return { ok: true, value: raw };
 }
 
-// overall progress across all refs
 function progressFor(formId: string, session: any, form: ReturnType<typeof loadForm>) {
   const state = parseState(session.answers_json);
   const fieldsPer = form.fields.length;
@@ -180,6 +169,53 @@ function currentRefNumber(p: { doneRefs: number }) {
   return p.doneRefs + 1;
 }
 
+function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string, state: EngineState, fieldIndex: number): ChatResponse {
+  const fieldsPer = form.fields.length;
+  const totalRefs = Math.max(1, form.targetCount ?? 1);
+  const doneRefs = state.__refs.length;
+
+  const total = totalRefs * fieldsPer;
+  const done = Math.min(doneRefs * fieldsPer + fieldIndex, total);
+
+  // if finished all refs, show review
+  if (doneRefs >= totalRefs) {
+    return {
+      kind: "review",
+      sessionId,
+      message: "Quick review — does everything look right?",
+      // Include field order to allow deterministic rendering in UI
+      answers: {
+        references: state.__refs,
+        fields: form.fields.map((f) => ({ id: f.id, label: f.label })),
+      },
+      progress: { done: total, total },
+    };
+  }
+
+  const field = form.fields[fieldIndex];
+  const header = `Reference ${doneRefs + 1} of ${totalRefs}`;
+
+  if (field.type === "file") {
+    return {
+      kind: "ask",
+      sessionId,
+      fieldId: field.id,
+      message: `${header}\n\nPlease upload the file using the upload button below.`,
+      input: hintForField(field),
+      progress: { done, total },
+    };
+  }
+
+  return {
+    kind: "ask",
+    sessionId,
+    fieldId: field.id,
+    message: `${header}\n\n${field.label}`,
+    input: hintForField(field),
+    progress: { done, total },
+  };
+}
+
 /**
  * Back behavior:
  * - within a reference: delete the previous field answer from draft
@@ -190,48 +226,46 @@ function goBackOne(formId: string, sessionId: string): ChatResponse {
   const session = getSession(sessionId);
   if (!session) return startOrContinue(formId, sessionId);
 
-  const { state, fieldIndex, doneRefs, totalRefs } = progressFor(formId, session, form);
+  const p = progressFor(formId, session, form);
+  const state = p.state;
 
-  // if at the start of the first ref, nothing to do
-  if (doneRefs === 0 && fieldIndex <= 0) {
-    saveState(sessionId, 0, state, "in_progress");
-    return startOrContinue(formId, sessionId);
-  }
-
-  // if inside current draft (fieldIndex > 0): move back within draft and delete the previous answer
-  if (fieldIndex > 0) {
-    const prevField = form.fields[fieldIndex - 1];
-    if (prevField?.type === "file") {
-      // delete latest file for this session+field
-      const f = db
-        .prepare("SELECT id, disk_path FROM files WHERE session_id = ? AND field_id = ? ORDER BY created_at DESC LIMIT 1")
-        .get(sessionId, prevField.id) as any | undefined;
-      if (f?.disk_path) {
-        try { fs.unlinkSync(f.disk_path); } catch {}
-      }
-      if (f?.id) db.prepare("DELETE FROM files WHERE id = ?").run(f.id);
+  // If already at review and there are refs, "back" should bring you to last ref's last field
+  if (p.doneRefs >= p.totalRefs) {
+    if (state.__refs.length > 0) {
+      const last = state.__refs.pop()!;
+      state.__draft = { ...last };
+      const lastFieldIndex = Math.max(0, form.fields.length - 1);
+      saveState(sessionId, lastFieldIndex, state, "in_progress");
+      return responseFromState(form, sessionId, state, lastFieldIndex);
     }
 
-    delete state.__draft[prevField.id];
-    saveState(sessionId, fieldIndex - 1, state, "in_progress");
+    // nothing to go back to
+    saveState(sessionId, 0, { __refs: [], __draft: {} }, "in_progress");
     return startOrContinue(formId, sessionId);
   }
 
-  // fieldIndex === 0, so move back to previous completed ref
-  const prev = state.__refs.pop(); // remove last saved ref object
-  // (If you later add file fields inside refs, you can also delete their attachments here based on prev content)
-  saveState(sessionId, form.fields.length - 1, state, "in_progress");
-  return {
-    kind: "ask",
-    sessionId,
-    fieldId: form.fields[form.fields.length - 1].id,
-    message: `Okay — back to reference ${Math.max(1, doneRefs)}. ${form.fields[form.fields.length - 1].label}`,
-    input: hintForField(form.fields[form.fields.length - 1]),
-    progress: {
-      done: Math.min((state.__refs.length * form.fields.length) + (form.fields.length - 1), (totalRefs * form.fields.length)),
-      total: totalRefs * form.fields.length,
-    },
-  };
+  // within a reference
+  const idx = p.fieldIndex;
+  if (idx > 0) {
+    const prevField = form.fields[idx - 1];
+    delete state.__draft[prevField.id];
+    const prevIdx = idx - 1;
+    saveState(sessionId, prevIdx, state, "in_progress");
+    return responseFromState(form, sessionId, state, prevIdx);
+  }
+
+  // at start of a reference: remove previous committed ref (if any) and restore it into draft
+  if (state.__refs.length > 0) {
+    const last = state.__refs.pop()!;
+    state.__draft = { ...last };
+    const lastFieldIndex = Math.max(0, form.fields.length - 1);
+    saveState(sessionId, lastFieldIndex, state, "in_progress");
+    return responseFromState(form, sessionId, state, lastFieldIndex);
+  }
+
+  // nothing to go back to
+  saveState(sessionId, 0, { __refs: [], __draft: {} }, "in_progress");
+  return startOrContinue(formId, sessionId);
 }
 
 export function startOrContinue(formId: string, sessionId?: string): ChatResponse {
@@ -244,7 +278,6 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
   }
 
   const p = progressFor(formId, session, form);
-  const totalFields = form.fields.length;
   const idx = p.fieldIndex;
 
   // if finished all refs, show review
@@ -253,13 +286,25 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
       kind: "review",
       sessionId: sid,
       message: "Quick review — does everything look right?",
-      answers: { references: p.state.__refs },
+      answers: { references: p.state.__refs, fields: form.fields.map((f) => ({ id: f.id, label: f.label })) },
       progress: { done: p.total, total: p.total },
     };
   }
 
   const field = form.fields[idx];
   const header = `Reference ${currentRefNumber(p)} of ${p.totalRefs}`;
+
+  if (field.type === "file") {
+    return {
+      kind: "ask",
+      sessionId: sid,
+      fieldId: field.id,
+      message: `${header}\n\nPlease upload the file using the upload button below.`,
+      input: hintForField(field),
+      progress: { done: p.done, total: p.total },
+    };
+  }
+
   return {
     kind: "ask",
     sessionId: sid,
@@ -292,7 +337,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
       kind: "review",
       sessionId,
       message: "Quick review — does everything look right?",
-      answers: { references: state.__refs },
+      answers: { references: state.__refs, fields: form.fields.map((f) => ({ id: f.id, label: f.label })) },
       progress: { done: p.total, total: p.total },
     };
   }
@@ -336,18 +381,17 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
     // if more refs remain, reset field_index to 0 and keep going
     if (state.__refs.length < (form.targetCount ?? 1)) {
       saveState(sessionId, 0, state, "in_progress");
-      const r = startOrContinue(formId, sessionId);
-      return withAck(r, state);
+      return withAck(responseFromState(form, sessionId, state, 0), state);
     }
 
     // otherwise go to review
     saveState(sessionId, 0, state, "in_progress");
-    return withAck(startOrContinue(formId, sessionId), state);
+    return withAck(responseFromState(form, sessionId, state, 0), state);
   }
 
   // continue within this reference
   saveState(sessionId, nextFieldIndex, state, "in_progress");
-  return withAck(startOrContinue(formId, sessionId), state);
+  return withAck(responseFromState(form, sessionId, state, nextFieldIndex), state);
 }
 
 export function recordFileAndAdvance(params: {
@@ -371,15 +415,9 @@ export function recordFileAndAdvance(params: {
     return startOrContinue(params.formId, params.sessionId);
   }
 
-  db.prepare("INSERT INTO files (id, session_id, field_id, original_name, mime, size_bytes, disk_path) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-    params.fileId,
-    params.sessionId,
-    params.fieldId,
-    params.originalName,
-    params.mime,
-    params.sizeBytes,
-    params.diskPath
-  );
+  db.prepare(
+    "INSERT INTO files (id, session_id, field_id, original_name, mime, size_bytes, disk_path) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(params.fileId, params.sessionId, params.fieldId, params.originalName, params.mime, params.sizeBytes, params.diskPath);
 
   state.__draft[params.fieldId] = {
     fileId: params.fileId,
@@ -395,28 +433,43 @@ export function recordFileAndAdvance(params: {
     state.__draft = {};
 
     saveState(params.sessionId, 0, state, "in_progress");
-    return withAck(startOrContinue(params.formId, params.sessionId), state);
+    // If more refs remain, continue; otherwise responseFromState will return review.
+    return withAck(responseFromState(form, params.sessionId, state, 0), state);
   }
 
   saveState(params.sessionId, nextFieldIndex, state, "in_progress");
-  return withAck(startOrContinue(params.formId, params.sessionId), state);
+  return withAck(responseFromState(form, params.sessionId, state, nextFieldIndex), state);
 }
 
 export function submitSession(formId: string, sessionId: string): ChatResponse {
   const session = getSession(sessionId);
-  if (!session) return { kind: "done", sessionId, message: "No active session found." };
+  if (!session) return { kind: "done", sessionId, message: "Session not found." };
 
-  const state = parseState(session.answers_json);
+  const form = loadForm(formId);
+  const p = progressFor(formId, session, form);
 
-  const submissionId = crypto.randomUUID();
+  // Persist submission (append-only)
   db.prepare("INSERT INTO submissions (id, session_id, form_id, answers_json) VALUES (?, ?, ?, ?)").run(
-    submissionId,
+    crypto.randomUUID(),
     sessionId,
     formId,
-    JSON.stringify({ references: state.__refs })
+    session.answers_json
   );
 
-  saveState(sessionId, Number(session.field_index ?? 0), state, "submitted");
+  // Mark session submitted
+  saveState(sessionId, p.fieldIndex, p.state, "submitted");
+
   return { kind: "done", sessionId, message: "Submitted. Thank you!" };
+}
+
+/**
+ * Deletes a file on disk if it exists; best-effort.
+ */
+function safeUnlink(p: string) {
+  try {
+    fs.unlinkSync(p);
+  } catch {
+    // ignore
+  }
 }
 
