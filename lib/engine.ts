@@ -96,6 +96,10 @@ function hintForField(field: Field): InputHint {
   }
 }
 
+/**
+ * ACKS: keep for conversational feel *during data collection* only.
+ * We explicitly do NOT apply ACKs to review/done, per your requirement.
+ */
 const ACKS = ["Got it.", "Perfect — let’s keep going!", "Nice.", "Awesome, thanks."];
 
 function pickAck() {
@@ -112,7 +116,8 @@ function extractName(state: EngineState): string | null {
 }
 
 function withAck(res: ChatResponse, state?: EngineState): ChatResponse {
-  if (res.kind === "ask" || res.kind === "review") {
+  // Only ACK on "ask". Never ACK on review/done.
+  if (res.kind === "ask") {
     const name = state ? extractName(state) : null;
     const ack = name ? `${pickAck()} ${name}.` : pickAck();
     return { ...res, message: `${ack}\n\n${res.message}` } as ChatResponse;
@@ -169,6 +174,56 @@ function currentRefNumber(p: { doneRefs: number }) {
   return p.doneRefs + 1;
 }
 
+function formatValueForSummary(v: any): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map(formatValueForSummary).filter(Boolean).join(", ");
+  if (typeof v === "object") {
+    // common file shape in your code:
+    // { fileId, name, mime, sizeBytes }
+    if (v?.name && v?.mime) return `${v.name} (${v.mime})`;
+    return JSON.stringify(v, null, 2);
+  }
+  return String(v);
+}
+
+function buildCleanSummary(form: ReturnType<typeof loadForm>, state: EngineState): string {
+  const fields = form.fields;
+  const refs = state.__refs;
+
+  if (!refs || refs.length === 0) return "(No references captured)";
+
+  const blocks: string[] = [];
+
+  for (let r = 0; r < refs.length; r++) {
+    const ref = refs[r] || {};
+    blocks.push(`Reference ${r + 1}`);
+    for (const f of fields) {
+      const label = (f as any).label ?? f.id;
+      const raw = (ref as any)[f.id];
+      const val = formatValueForSummary(raw);
+      if (val === "") continue;
+      blocks.push(`- ${label}: ${val}`);
+    }
+    if (r !== refs.length - 1) blocks.push(""); // blank line between refs
+  }
+
+  return blocks.join("\n");
+}
+
+/**
+ * Review payload: include both:
+ * - references: raw values per ref (stable ids)
+ * - fields: id->label mapping for deterministic UI rendering
+ */
+function buildReviewPayload(form: ReturnType<typeof loadForm>, state: EngineState) {
+  return {
+    references: state.__refs,
+    fields: form.fields.map((f) => ({ id: f.id, label: (f as any).label ?? f.id })),
+  };
+}
+
 function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string, state: EngineState, fieldIndex: number): ChatResponse {
   const fieldsPer = form.fields.length;
   const totalRefs = Math.max(1, form.targetCount ?? 1);
@@ -177,17 +232,14 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
   const total = totalRefs * fieldsPer;
   const done = Math.min(doneRefs * fieldsPer + fieldIndex, total);
 
-  // if finished all refs, show review
+  // if finished all refs, show review (clean, no ACK)
   if (doneRefs >= totalRefs) {
+    const summary = buildCleanSummary(form, state);
     return {
       kind: "review",
       sessionId,
-      message: "Quick review — does everything look right?",
-      // Include field order to allow deterministic rendering in UI
-      answers: {
-        references: state.__refs,
-        fields: form.fields.map((f) => ({ id: f.id, label: f.label })),
-      },
+      message: `To quickly review, does everything look right?\n\n${summary}`,
+      answers: buildReviewPayload(form, state),
       progress: { done: total, total },
     };
   }
@@ -210,7 +262,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
     kind: "ask",
     sessionId,
     fieldId: field.id,
-    message: `${header}\n\n${field.label}`,
+    message: `${header}\n\n${(field as any).label ?? field.id}`,
     input: hintForField(field),
     progress: { done, total },
   };
@@ -219,7 +271,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
 /**
  * Back behavior:
  * - within a reference: delete the previous field answer from draft
- * - at the start of a reference: go to previous saved reference and remove it (and delete any file for that ref if needed)
+ * - at the start of a reference: go to previous saved reference and remove it
  */
 function goBackOne(formId: string, sessionId: string): ChatResponse {
   const form = loadForm(formId);
@@ -280,13 +332,14 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
   const p = progressFor(formId, session, form);
   const idx = p.fieldIndex;
 
-  // if finished all refs, show review
+  // if finished all refs, show review (clean)
   if (p.doneRefs >= p.totalRefs) {
+    const summary = buildCleanSummary(form, p.state);
     return {
       kind: "review",
       sessionId: sid,
-      message: "Quick review — does everything look right?",
-      answers: { references: p.state.__refs, fields: form.fields.map((f) => ({ id: f.id, label: f.label })) },
+      message: `To quickly review, does everything look right?\n\n${summary}`,
+      answers: buildReviewPayload(form, p.state),
       progress: { done: p.total, total: p.total },
     };
   }
@@ -309,7 +362,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
     kind: "ask",
     sessionId: sid,
     fieldId: field.id,
-    message: `${header}\n\n${field.label}`,
+    message: `${header}\n\n${(field as any).label ?? field.id}`,
     input: hintForField(field),
     progress: { done: p.done, total: p.total },
   };
@@ -317,13 +370,13 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
 
 export function handleUserMessage(formId: string, sessionId: string, userText: string): ChatResponse {
   const form = loadForm(formId);
-  const session = upsertSession(sessionId, formId); 
+  const session = upsertSession(sessionId, formId);
   console.log("ENGINE before", {
-   formId,
-   sessionId,
-   userText,
-   field_index: session.field_index,
-   answers_json_len: (session.answers_json || "").length,
+    formId,
+    sessionId,
+    userText,
+    field_index: session.field_index,
+    answers_json_len: (session.answers_json || "").length,
   });
 
   const state = parseState(session.answers_json);
@@ -331,8 +384,8 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
   const cmd = userText.trim().toLowerCase();
   if (cmd === "restart") {
     saveState(sessionId, 0, { __refs: [], __draft: {} }, "in_progress");
-   console.log("ENGINE after #334"); 
-   return startOrContinue(formId, sessionId);
+    console.log("ENGINE after restart");
+    return startOrContinue(formId, sessionId);
   }
   if (cmd === "back") {
     console.log("ENGINE after back");
@@ -341,14 +394,15 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
 
   const p = progressFor(formId, session, form);
 
-  // finished all refs -> review
+  // finished all refs -> review (clean, no ACK)
   if (p.doneRefs >= p.totalRefs) {
-    console.log("ENGINE after 346");
+    console.log("ENGINE after review");
+    const summary = buildCleanSummary(form, state);
     return {
       kind: "review",
       sessionId,
-      message: "Quick review — does everything look right?",
-      answers: { references: state.__refs, fields: form.fields.map((f) => ({ id: f.id, label: f.label })) },
+      message: `To quickly review, does everything look right?\n\n${summary}`,
+      answers: buildReviewPayload(form, state),
       progress: { done: p.total, total: p.total },
     };
   }
@@ -370,7 +424,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
 
   const v = validate(field, userText);
   if (!v.ok) {
-    console.log("ENGINE after validate"); 
+    console.log("ENGINE after validate");
     return {
       kind: "ask",
       sessionId,
@@ -394,19 +448,19 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
     // if more refs remain, reset field_index to 0 and keep going
     if (state.__refs.length < (form.targetCount ?? 1)) {
       saveState(sessionId, 0, state, "in_progress");
-      console.log("ENGINE after 397");
+      console.log("ENGINE after commit ref, continue");
       return withAck(responseFromState(form, sessionId, state, 0), state);
     }
 
-    // otherwise go to review
+    // otherwise go to review (responseFromState will be review; withAck is a no-op for review)
     saveState(sessionId, 0, state, "in_progress");
-    console.log("ENGINE after 403");
-    return withAck(responseFromState(form, sessionId, state, 0), state);
+    console.log("ENGINE after commit ref, review");
+    return responseFromState(form, sessionId, state, 0);
   }
 
   // continue within this reference
   saveState(sessionId, nextFieldIndex, state, "in_progress");
-  console.log("ENGINE after 409");
+  console.log("ENGINE after advance");
   return withAck(responseFromState(form, sessionId, state, nextFieldIndex), state);
 }
 
@@ -450,11 +504,13 @@ export function recordFileAndAdvance(params: {
 
     saveState(params.sessionId, 0, state, "in_progress");
     // If more refs remain, continue; otherwise responseFromState will return review.
-    return withAck(responseFromState(form, params.sessionId, state, 0), state);
+    const res = responseFromState(form, params.sessionId, state, 0);
+    return res.kind === "ask" ? withAck(res, state) : res;
   }
 
   saveState(params.sessionId, nextFieldIndex, state, "in_progress");
-  return withAck(responseFromState(form, params.sessionId, state, nextFieldIndex), state);
+  const res = responseFromState(form, params.sessionId, state, nextFieldIndex);
+  return res.kind === "ask" ? withAck(res, state) : res;
 }
 
 export function submitSession(formId: string, sessionId: string): ChatResponse {
@@ -475,7 +531,13 @@ export function submitSession(formId: string, sessionId: string): ChatResponse {
   // Mark session submitted
   saveState(sessionId, p.fieldIndex, p.state, "submitted");
 
-  return { kind: "done", sessionId, message: "Submitted. Thank you!" };
+  // Return same clean summary, no ACKs.
+  const summary = buildCleanSummary(form, p.state);
+  return {
+    kind: "done",
+    sessionId,
+    message: `Submitted. Here’s the information you provided:\n\n${summary}`,
+  };
 }
 
 /**
