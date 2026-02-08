@@ -42,10 +42,7 @@ function sleep(ms: number) {
 
 function randomDelay(kind: ChatResponse["kind"]) {
   // tuned to feel human without being annoying
-  const base =
-    kind === "review" ? 700 :
-    kind === "done" ? 450 :
-    350;
+  const base = kind === "review" ? 700 : kind === "done" ? 450 : 350;
 
   const jitter = 450; // +/- range
   return base + Math.floor(Math.random() * jitter);
@@ -79,7 +76,6 @@ function deriveCollected(thread: ThreadMsg[]) {
 }
 
 async function postJson<T>(path: string, body: any): Promise<T> {
-
   // HARD normalize URL to same-origin
   const url =
     typeof window !== "undefined"
@@ -103,7 +99,6 @@ async function postJson<T>(path: string, body: any): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-
 export default function DemoPage() {
   const sendingRef = useRef(false);
   const [formId, setFormId] = useState<string>("demo");
@@ -120,14 +115,32 @@ export default function DemoPage() {
   const [showCollected, setShowCollected] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [stickToBottom, setStickToBottom] = useState(true);
 
   const collected = useMemo(() => deriveCollected(thread), [thread]);
 
+  // Stick-to-bottom unless the user scrolls up.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [thread.length]);
+
+    const onScroll = () => {
+      const distanceFromBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight;
+      // If user scrolls up, stop auto-following; if they return near bottom, re-enable.
+      setStickToBottom(distanceFromBottom < 80);
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!stickToBottom) return;
+    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [thread.length, stickToBottom]);
 
   useEffect(() => {
     try {
@@ -148,7 +161,8 @@ export default function DemoPage() {
 
   function appendTyping() {
     setThread((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].role === "typing") return prev;
+      if (prev.length > 0 && prev[prev.length - 1].role === "typing")
+        return prev;
       return [...prev, { id: uid(), role: "typing" }];
     });
   }
@@ -186,10 +200,9 @@ export default function DemoPage() {
         setThread((prev) => prev.filter((m) => m.role !== "typing"));
         setError(e?.message ?? "Failed to start chat");
       } finally {
-        if (!cancelled) 
-        {
+        if (!cancelled) {
           sendingRef.current = false;
- 	  setIsSending(false);
+          setIsSending(false);
         }
       }
     }
@@ -242,7 +255,10 @@ export default function DemoPage() {
     setIsSending(true);
     setError(null);
 
-    setThread((prev) => [...prev, { id: uid(), role: "user", text: `Uploaded: ${file.name}` }]);
+    setThread((prev) => [
+      ...prev,
+      { id: uid(), role: "user", text: `Uploaded: ${file.name}` },
+    ]);
     appendTyping();
 
     try {
@@ -290,7 +306,10 @@ export default function DemoPage() {
     return `${done}/${p.total}`;
   }, [bot]);
 
-  const showChoiceButtons = bot?.kind === "ask" && bot.input?.type === "choice" && Array.isArray(bot.input.options);
+  const showChoiceButtons =
+    bot?.kind === "ask" &&
+    bot.input?.type === "choice" &&
+    Array.isArray(bot.input.options);
   const showFileUpload = bot?.kind === "ask" && bot.input?.type === "file";
   const showReviewButtons = bot?.kind === "review";
 
@@ -329,11 +348,21 @@ export default function DemoPage() {
               {showCollected ? "Hide collected" : "Show collected"}
             </button>
 
-            <button type="button" onClick={() => void sendText("back")} style={styles.smallBtn} disabled={isSending}>
+            <button
+              type="button"
+              onClick={() => void sendText("back")}
+              style={styles.smallBtn}
+              disabled={isSending}
+            >
               Back
             </button>
 
-            <button type="button" onClick={() => void sendText("restart")} style={styles.smallBtn} disabled={isSending}>
+            <button
+              type="button"
+              onClick={() => void sendText("restart")}
+              style={styles.smallBtn}
+              disabled={isSending}
+            >
               Restart
             </button>
           </div>
@@ -364,9 +393,15 @@ export default function DemoPage() {
                     <div style={styles.agentAvatarSmall}>A</div>
                   </div>
                   <div style={styles.bubbleAgent}>
-                    <span style={{ ...styles.typingDot, animationDelay: "0ms" }} />
-                    <span style={{ ...styles.typingDot, animationDelay: "140ms" }} />
-                    <span style={{ ...styles.typingDot, animationDelay: "280ms" }} />
+                    <span
+                      style={{ ...styles.typingDot, animationDelay: "0ms" }}
+                    />
+                    <span
+                      style={{ ...styles.typingDot, animationDelay: "140ms" }}
+                    />
+                    <span
+                      style={{ ...styles.typingDot, animationDelay: "280ms" }}
+                    />
                   </div>
                 </div>
               );
@@ -406,7 +441,11 @@ export default function DemoPage() {
                         <label style={styles.uploadLabel}>
                           <input
                             type="file"
-                            accept={bot.kind === "ask" && bot.input.type === "file" ? (bot.input.accept ?? "*/*") : "*/*"}
+                            accept={
+                              bot.kind === "ask" && bot.input.type === "file"
+                                ? bot.input.accept ?? "*/*"
+                                : "*/*"
+                            }
                             style={{ display: "none" }}
                             onChange={(e) => {
                               const f = e.target.files?.[0];
@@ -419,7 +458,11 @@ export default function DemoPage() {
                           Upload file
                         </label>
                         <div style={styles.subtle}>
-                          {bot.kind === "ask" && bot.input.type === "file" && bot.input.accept ? `Accepted: ${bot.input.accept}` : ""}
+                          {bot.kind === "ask" &&
+                          bot.input.type === "file" &&
+                          bot.input.accept
+                            ? `Accepted: ${bot.input.accept}`
+                            : ""}
                         </div>
                       </div>
                     )}
@@ -427,10 +470,20 @@ export default function DemoPage() {
                     {/* YES/NO buttons for review */}
                     {showReviewButtons && isLast && (
                       <div style={styles.choices}>
-                        <button type="button" onClick={() => void sendText("yes")} style={styles.choiceBtn} disabled={isSending}>
+                        <button
+                          type="button"
+                          onClick={() => void sendText("yes")}
+                          style={styles.choiceBtn}
+                          disabled={isSending}
+                        >
                           Yes, submit
                         </button>
-                        <button type="button" onClick={() => void sendText("no")} style={styles.choiceBtn} disabled={isSending}>
+                        <button
+                          type="button"
+                          onClick={() => void sendText("no")}
+                          style={styles.choiceBtn}
+                          disabled={isSending}
+                        >
                           No, edit
                         </button>
                       </div>
@@ -448,6 +501,8 @@ export default function DemoPage() {
               </div>
             );
           })}
+
+          <div ref={bottomRef} />
         </div>
 
         {error && <div style={styles.error}>{error}</div>}
@@ -475,8 +530,12 @@ export default function DemoPage() {
             type="submit"
             style={{
               ...styles.sendBtn,
-              opacity: isSending || bot?.kind === "done" || showFileUpload ? 0.5 : 1,
-              cursor: isSending || bot?.kind === "done" || showFileUpload ? "not-allowed" : "pointer",
+              opacity:
+                isSending || bot?.kind === "done" || showFileUpload ? 0.5 : 1,
+              cursor:
+                isSending || bot?.kind === "done" || showFileUpload
+                  ? "not-allowed"
+                  : "pointer",
             }}
             disabled={isSending || bot?.kind === "done" || showFileUpload}
           >
@@ -490,7 +549,8 @@ export default function DemoPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: "100vh",
+    height: "100dvh",
+    minHeight: "100dvh",
     background: "#f5f6f8",
     display: "flex",
     justifyContent: "center",
@@ -506,7 +566,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",
-    minHeight: "calc(100vh - 32px)",
+    height: "calc(100dvh - 32px)",
   },
   header: {
     padding: "14px 16px",
@@ -549,7 +609,12 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#fafafa",
     padding: "10px 16px",
   },
-  collectedTitle: { fontSize: 12, fontWeight: 700, color: "#444", marginBottom: 8 },
+  collectedTitle: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: "#444",
+    marginBottom: 8,
+  },
   collectedList: { display: "flex", flexDirection: "column", gap: 8 },
   collectedRow: {
     display: "grid",
