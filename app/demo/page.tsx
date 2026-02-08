@@ -670,6 +670,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 999,
     padding: "10px 12px",
     fontSize: 14,
+    color: "#111",
     outline: "none",
   },
   sendBtn: {
