@@ -317,15 +317,25 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
 
 export function handleUserMessage(formId: string, sessionId: string, userText: string): ChatResponse {
   const form = loadForm(formId);
-  const session = upsertSession(sessionId, formId);
+  const session = upsertSession(sessionId, formId); 
+  console.log("ENGINE before", {
+   formId,
+   sessionId,
+   userText,
+   field_index: session.field_index,
+   answers_json_len: (session.answers_json || "").length,
+  });
+
   const state = parseState(session.answers_json);
 
   const cmd = userText.trim().toLowerCase();
   if (cmd === "restart") {
     saveState(sessionId, 0, { __refs: [], __draft: {} }, "in_progress");
-    return startOrContinue(formId, sessionId);
+   console.log("ENGINE after #334"); 
+   return startOrContinue(formId, sessionId);
   }
   if (cmd === "back") {
+    console.log("ENGINE after back");
     return goBackOne(formId, sessionId);
   }
 
@@ -333,6 +343,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
 
   // finished all refs -> review
   if (p.doneRefs >= p.totalRefs) {
+    console.log("ENGINE after 346");
     return {
       kind: "review",
       sessionId,
@@ -346,6 +357,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
   const field = form.fields[i];
 
   if (field.type === "file") {
+    console.log("ENGINE after file");
     return {
       kind: "ask",
       sessionId,
@@ -358,6 +370,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
 
   const v = validate(field, userText);
   if (!v.ok) {
+    console.log("ENGINE after validate"); 
     return {
       kind: "ask",
       sessionId,
@@ -381,16 +394,19 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
     // if more refs remain, reset field_index to 0 and keep going
     if (state.__refs.length < (form.targetCount ?? 1)) {
       saveState(sessionId, 0, state, "in_progress");
+      console.log("ENGINE after 397");
       return withAck(responseFromState(form, sessionId, state, 0), state);
     }
 
     // otherwise go to review
     saveState(sessionId, 0, state, "in_progress");
+    console.log("ENGINE after 403");
     return withAck(responseFromState(form, sessionId, state, 0), state);
   }
 
   // continue within this reference
   saveState(sessionId, nextFieldIndex, state, "in_progress");
+  console.log("ENGINE after 409");
   return withAck(responseFromState(form, sessionId, state, nextFieldIndex), state);
 }
 

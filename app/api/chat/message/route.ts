@@ -12,6 +12,13 @@ export async function POST(req: Request) {
       { error: "Missing formId or sessionId" },
       { status: 400 }
     );
+  console.log("API /message", {
+    formId,
+    sessionId,
+    text,
+    ts: new Date().toISOString(),
+  });
+
   }
 
   const result = handleUserMessage(formId, sessionId, String(text ?? ""));
