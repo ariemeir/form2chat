@@ -41,10 +41,8 @@ function sleep(ms: number) {
 }
 
 function randomDelay(kind: ChatResponse["kind"]) {
-  // tuned to feel human without being annoying
   const base = kind === "review" ? 700 : kind === "done" ? 450 : 350;
-
-  const jitter = 450; // +/- range
+  const jitter = 450;
   return base + Math.floor(Math.random() * jitter);
 }
 
@@ -53,30 +51,38 @@ function clamp(n: number, min: number, max: number) {
 }
 
 /**
- * Derive "Collected so far" from the chat transcript:
- * - We pair each agent prompt with the subsequent user reply.
- * - Works even if backend doesn't return draft answers yet.
+ * Pair each agent prompt with the subsequent user reply.
+ * This is robust even if backend doesn't return draft answers.
  */
 function deriveCollected(thread: ThreadMsg[]) {
   const pairs: Array<{ question: string; answer: string }> = [];
   let pendingQuestion: string | null = null;
 
   for (const m of thread) {
-    if (m.role === "agent") {
-      pendingQuestion = m.text;
-    } else if (m.role === "user") {
+    if (m.role === "agent") pendingQuestion = m.text;
+    else if (m.role === "user") {
       if (pendingQuestion) {
         pairs.push({ question: pendingQuestion, answer: m.text });
         pendingQuestion = null;
       }
     }
   }
-
   return pairs;
 }
 
+function formatInlineSummary(
+  pairs: Array<{ question: string; answer: string }>,
+  maxItems = 50
+) {
+  const items = pairs.slice(0, maxItems);
+  if (items.length === 0) return "(No answers captured)";
+
+  return items
+    .map((p) => `• ${p.question}\n  ${p.answer}`)
+    .join("\n\n");
+}
+
 async function postJson<T>(path: string, body: any): Promise<T> {
-  // HARD normalize URL to same-origin
   const url =
     typeof window !== "undefined"
       ? new URL(path, window.location.origin).toString()
@@ -84,25 +90,19 @@ async function postJson<T>(path: string, body: any): Promise<T> {
 
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   const text = await res.text();
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${url}: ${text.slice(0, 200)}`);
-  }
-
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}: ${text.slice(0, 200)}`);
   return JSON.parse(text) as T;
 }
 
 export default function DemoPage() {
   const sendingRef = useRef(false);
-  const [formId, setFormId] = useState<string>("demo");
 
+  const [formId, setFormId] = useState<string>("demo");
   const [bot, setBot] = useState<ChatResponse | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
@@ -112,10 +112,10 @@ export default function DemoPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // hidden by default; auto-forced on during review
+  // Hidden by default; purely user-toggle.
   const [showCollected, setShowCollected] = useState(false);
 
-  // restart from beginning by re-running /api/chat/start
+  // Restart from beginning by re-running /api/chat/start.
   const [restartNonce, setRestartNonce] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -127,14 +127,13 @@ export default function DemoPage() {
   const isReview = bot?.kind === "review";
   const isDone = bot?.kind === "done";
 
-  // Stick-to-bottom unless the user scrolls up.
+  // Stick-to-bottom unless user scrolls up.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
     const onScroll = () => {
-      const distanceFromBottom =
-        el.scrollHeight - el.scrollTop - el.clientHeight;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       setStickToBottom(distanceFromBottom < 80);
     };
 
@@ -167,12 +166,12 @@ export default function DemoPage() {
 
   function appendTyping() {
     setThread((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].role === "typing")
-        return prev;
+      if (prev.length > 0 && prev[prev.length - 1].role === "typing") return prev;
       return [...prev, { id: uid(), role: "typing" }];
     });
   }
 
+  // Start / restart flow
   useEffect(() => {
     let cancelled = false;
 
@@ -198,9 +197,7 @@ export default function DemoPage() {
 
         setThread((prev) => {
           const withoutTyping = prev.filter((m) => m.role !== "typing");
-          const next: ThreadMsg[] = [...withoutTyping];
-          next.push({ id: uid(), role: "agent", text: r.message });
-          return next;
+          return [...withoutTyping, { id: uid(), role: "agent", text: r.message }];
         });
       } catch (e: any) {
         if (cancelled) return;
@@ -233,17 +230,19 @@ export default function DemoPage() {
     setIsSending(true);
     setError(null);
 
+    // reflect user action in chat (optional but feels right)
+    setThread((prev) => [...prev, { id: uid(), role: "user", text: "Submit" }]);
     appendTyping();
 
     try {
-      const res = await postJson<any>("/api/submit", {
-        formId,
-        sessionId: sid,
-      });
+      const res = await postJson<any>("/api/submit", { formId, sessionId: sid });
 
-      // Try a few common shapes; fall back to entire response.
-      const submitted =
-        res?.submitted ?? res?.data ?? res?.answers ?? res ?? { ok: true };
+      // Inline summary comes from transcript for UX ordering + robustness.
+      const summaryText = formatInlineSummary(deriveCollected(thread));
+
+      // If backend returns canonical answers, you can optionally include it too.
+      // Keep it minimal: don't dump raw JSON unless you want it.
+      // const submitted = res?.submitted ?? res?.answers ?? res;
 
       await sleep(randomDelay("done"));
 
@@ -256,7 +255,8 @@ export default function DemoPage() {
             role: "agent",
             text:
               "✅ Submitted. Here’s what I captured:\n\n" +
-              JSON.stringify(submitted, null, 2),
+              summaryText +
+              "\n\nThanks — you’re all set.",
           },
         ];
       });
@@ -313,10 +313,7 @@ export default function DemoPage() {
     setIsSending(true);
     setError(null);
 
-    setThread((prev) => [
-      ...prev,
-      { id: uid(), role: "user", text: `Uploaded: ${file.name}` },
-    ]);
+    setThread((prev) => [...prev, { id: uid(), role: "user", text: `Uploaded: ${file.name}` }]);
     appendTyping();
 
     try {
@@ -328,10 +325,7 @@ export default function DemoPage() {
 
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const text = await res.text();
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} /api/upload: ${text.slice(0, 200)}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status} /api/upload: ${text.slice(0, 200)}`);
 
       const r = JSON.parse(text) as ChatResponse;
 
@@ -365,11 +359,8 @@ export default function DemoPage() {
   }, [bot]);
 
   const showChoiceButtons =
-    bot?.kind === "ask" &&
-    bot.input?.type === "choice" &&
-    Array.isArray(bot.input.options);
+    bot?.kind === "ask" && bot.input?.type === "choice" && Array.isArray(bot.input.options);
   const showFileUpload = bot?.kind === "ask" && bot.input?.type === "file";
-  const showReviewButtons = bot?.kind === "review";
 
   return (
     <div style={styles.page}>
@@ -410,7 +401,7 @@ export default function DemoPage() {
               type="button"
               onClick={() => void sendText("back")}
               style={styles.smallBtn}
-              disabled={isSending}
+              disabled={isSending || isReview || isDone}
             >
               Back
             </button>
@@ -426,7 +417,8 @@ export default function DemoPage() {
           </div>
         </div>
 
-        {(isReview || showCollected) && collected.length > 0 && (
+        {/* Manual-only collected panel */}
+        {showCollected && collected.length > 0 && (
           <div style={styles.collectedPanel}>
             <div style={styles.collectedTitle}>Collected so far</div>
             <div style={styles.collectedList}>
@@ -451,15 +443,9 @@ export default function DemoPage() {
                     <div style={styles.agentAvatarSmall}>A</div>
                   </div>
                   <div style={styles.bubbleAgent}>
-                    <span
-                      style={{ ...styles.typingDot, animationDelay: "0ms" }}
-                    />
-                    <span
-                      style={{ ...styles.typingDot, animationDelay: "140ms" }}
-                    />
-                    <span
-                      style={{ ...styles.typingDot, animationDelay: "280ms" }}
-                    />
+                    <span style={{ ...styles.typingDot, animationDelay: "0ms" }} />
+                    <span style={{ ...styles.typingDot, animationDelay: "140ms" }} />
+                    <span style={{ ...styles.typingDot, animationDelay: "280ms" }} />
                   </div>
                 </div>
               );
@@ -467,9 +453,7 @@ export default function DemoPage() {
 
             if (m.role === "agent") {
               const agentText =
-                isReview && isLast
-                  ? "To quickly review, does everything look right?"
-                  : m.text;
+                isReview && isLast ? "To quickly review, does everything look right?" : m.text;
 
               return (
                 <div key={m.id} style={styles.rowLeft}>
@@ -479,36 +463,30 @@ export default function DemoPage() {
                   <div style={styles.bubbleAgent}>
                     <div style={styles.bubbleText}>{agentText}</div>
 
-                    {/* Choices for ask */}
-                    {showChoiceButtons && isLast && (
+                    {/* Choice buttons (ask) */}
+                    {showChoiceButtons && isLast && bot?.kind === "ask" && bot.input.type === "choice" && (
                       <div style={styles.choices}>
-                        {bot!.kind === "ask" &&
-                          bot!.input.type === "choice" &&
-                          bot!.input.options.map((opt) => (
-                            <button
-                              key={opt}
-                              type="button"
-                              onClick={() => void sendText(opt)}
-                              style={styles.choiceBtn}
-                              disabled={isSending}
-                            >
-                              {opt}
-                            </button>
-                          ))}
+                        {bot.input.options.map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => void sendText(opt)}
+                            style={styles.choiceBtn}
+                            disabled={isSending || isReview || isDone}
+                          >
+                            {opt}
+                          </button>
+                        ))}
                       </div>
                     )}
 
-                    {/* Upload for file */}
-                    {showFileUpload && isLast && (
+                    {/* Upload (ask file) */}
+                    {showFileUpload && isLast && bot?.kind === "ask" && bot.input.type === "file" && (
                       <div style={styles.uploadRow}>
                         <label style={styles.uploadLabel}>
                           <input
                             type="file"
-                            accept={
-                              bot.kind === "ask" && bot.input.type === "file"
-                                ? bot.input.accept ?? "*/*"
-                                : "*/*"
-                            }
+                            accept={bot.input.accept ?? "*/*"}
                             style={{ display: "none" }}
                             onChange={(e) => {
                               const f = e.target.files?.[0];
@@ -516,22 +494,18 @@ export default function DemoPage() {
                               e.currentTarget.value = "";
                               void uploadFile(f);
                             }}
-                            disabled={isSending}
+                            disabled={isSending || isReview || isDone}
                           />
                           Upload file
                         </label>
                         <div style={styles.subtle}>
-                          {bot.kind === "ask" &&
-                          bot.input.type === "file" &&
-                          bot.input.accept
-                            ? `Accepted: ${bot.input.accept}`
-                            : ""}
+                          {bot.input.accept ? `Accepted: ${bot.input.accept}` : ""}
                         </div>
                       </div>
                     )}
 
-                    {/* Submit/Restart buttons for review */}
-                    {showReviewButtons && isLast && (
+                    {/* Review actions: Submit / Restart */}
+                    {isReview && isLast && (
                       <div style={styles.choices}>
                         <button
                           type="button"
@@ -581,7 +555,7 @@ export default function DemoPage() {
                 ? "Use Upload file above"
                 : showChoiceButtons
                 ? "Tap an option above or type…"
-                : showReviewButtons
+                : isReview
                 ? "Review above"
                 : "Type your reply…"
             }
@@ -593,12 +567,8 @@ export default function DemoPage() {
             type="submit"
             style={{
               ...styles.sendBtn,
-              opacity:
-                isSending || isDone || isReview || showFileUpload ? 0.5 : 1,
-              cursor:
-                isSending || isDone || isReview || showFileUpload
-                  ? "not-allowed"
-                  : "pointer",
+              opacity: isSending || isDone || isReview || showFileUpload ? 0.5 : 1,
+              cursor: isSending || isDone || isReview || showFileUpload ? "not-allowed" : "pointer",
             }}
             disabled={isSending || isDone || isReview || showFileUpload}
           >
