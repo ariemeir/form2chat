@@ -117,6 +117,7 @@ export default function DemoPage() {
   const [restartNonce, setRestartNonce] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const collected = useMemo(() => deriveCollected(thread), [thread]);
 
@@ -289,6 +290,21 @@ export default function DemoPage() {
 
   const showFileUpload = bot?.kind === "ask" && bot.input?.type === "file";
 
+  // Autofocus input after the agent produces a new prompt (when typing is possible).
+  useEffect(() => {
+    if (isSending) return;
+    if (showFileUpload) return;
+    if (!bot || bot.kind !== "ask") return;
+
+    // Focus once the typing indicator has been replaced by the agent message.
+    const last = thread[thread.length - 1];
+    if (!last || last.role !== "agent") return;
+
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }, [bot?.kind, (bot as any)?.fieldId, bot?.sessionId, isSending, showFileUpload, thread.length]);
+
   return (
     <div style={styles.page}>
       <style>{`
@@ -324,11 +340,21 @@ export default function DemoPage() {
               {showCollected ? "Hide collected" : "Show collected"}
             </button>
 
-            <button type="button" onClick={() => void sendText("back")} style={styles.smallBtn} disabled={isSending}>
+            <button
+              type="button"
+              onClick={() => void sendText("back")}
+              style={styles.smallBtn}
+              disabled={isSending}
+            >
               Back
             </button>
 
-            <button type="button" onClick={restartFromBeginning} style={styles.smallBtn} disabled={isSending}>
+            <button
+              type="button"
+              onClick={restartFromBeginning}
+              style={styles.smallBtn}
+              disabled={isSending}
+            >
               Restart
             </button>
           </div>
@@ -376,51 +402,41 @@ export default function DemoPage() {
                   <div style={styles.bubbleAgent}>
                     <div style={styles.bubbleText}>{m.text}</div>
 
-                    {showChoiceButtons && isLast && bot?.kind === "ask" && bot.input.type === "choice" && (
-                      <div style={styles.choices}>
-                        {bot.input.options.map((opt) => (
-                          <button
-                            key={opt}
-                            type="button"
-                            onClick={() => void sendText(opt)}
-                            style={styles.choiceBtn}
-                            disabled={isSending || isReview || isDone}
-                          >
-                            {opt}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {showFileUpload && isLast && bot?.kind === "ask" && bot.input.type === "file" && (
-                      <div style={styles.uploadRow}>
-                        <label style={styles.uploadLabel}>
-                          <input
-                            type="file"
-                            accept={bot.input.accept ?? "*/*"}
-                            style={{ display: "none" }}
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (!f) return;
-                              e.currentTarget.value = "";
-                              // your upload flow likely exists elsewhere; left unchanged
-                            }}
-                            disabled={isSending || isReview || isDone}
-                          />
-                          Upload file
-                        </label>
-                        <div style={styles.subtle}>
-                          {bot.input.accept ? `Accepted: ${bot.input.accept}` : ""}
+                    {showChoiceButtons &&
+                      isLast &&
+                      bot?.kind === "ask" &&
+                      bot.input.type === "choice" && (
+                        <div style={styles.choices}>
+                          {bot.input.options.map((opt) => (
+                            <button
+                              key={opt}
+                              type="button"
+                              onClick={() => void sendText(opt)}
+                              style={styles.choiceBtn}
+                              disabled={isSending || isReview || isDone}
+                            >
+                              {opt}
+                            </button>
+                          ))}
                         </div>
-                      </div>
-                    )}
+                      )}
 
                     {isReview && isLast && (
                       <div style={styles.choices}>
-                        <button type="button" onClick={() => void submit()} style={styles.choiceBtn} disabled={isSending}>
+                        <button
+                          type="button"
+                          onClick={() => void submit()}
+                          style={styles.choiceBtn}
+                          disabled={isSending}
+                        >
                           Submit
                         </button>
-                        <button type="button" onClick={restartFromBeginning} style={styles.choiceBtn} disabled={isSending}>
+                        <button
+                          type="button"
+                          onClick={restartFromBeginning}
+                          style={styles.choiceBtn}
+                          disabled={isSending}
+                        >
                           Restart
                         </button>
                       </div>
@@ -444,6 +460,7 @@ export default function DemoPage() {
 
         <form onSubmit={onSubmit} style={styles.composer}>
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={
@@ -466,7 +483,10 @@ export default function DemoPage() {
             style={{
               ...styles.sendBtn,
               opacity: isSending || isDone || isReview || showFileUpload ? 0.5 : 1,
-              cursor: isSending || isDone || isReview || showFileUpload ? "not-allowed" : "pointer",
+              cursor:
+                isSending || isDone || isReview || showFileUpload
+                  ? "not-allowed"
+                  : "pointer",
             }}
             disabled={isSending || isDone || isReview || showFileUpload}
           >
@@ -612,22 +632,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
   },
   choiceBtn: {
-    border: "1px solid #ddd",
-    background: "#fff",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 13,
-    cursor: "pointer",
-  },
-
-  uploadRow: {
-    marginTop: 10,
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    flexWrap: "wrap",
-  },
-  uploadLabel: {
     border: "1px solid #ddd",
     background: "#fff",
     borderRadius: 999,
