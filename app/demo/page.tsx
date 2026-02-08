@@ -175,10 +175,12 @@ export default function DemoPage({
       setThread([{ id: uid(), role: "typing" }]);
 
       try {
-        const r = await postJson("/api/chat/start", {
-          formId,
-          candidateToken: token,
-        });
+
+	const r = await postJson<ChatResponse>("/api/chat/start", {
+	  formId,
+	  candidateToken: token,
+	});
+
 
         if (cancelled) return;
 
