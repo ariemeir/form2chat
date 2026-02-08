@@ -105,6 +105,7 @@ async function postJson<T>(path: string, body: any): Promise<T> {
 
 
 export default function DemoPage() {
+  const sendingRef = useRef(false);
   const [formId, setFormId] = useState<string>("demo");
 
   const [bot, setBot] = useState<ChatResponse | null>(null);
@@ -185,7 +186,11 @@ export default function DemoPage() {
         setThread((prev) => prev.filter((m) => m.role !== "typing"));
         setError(e?.message ?? "Failed to start chat");
       } finally {
-        if (!cancelled) setIsSending(false);
+        if (!cancelled) 
+        {
+          sendingRef.current = false;
+ 	  setIsSending(false);
+        }
       }
     }
 
@@ -199,7 +204,8 @@ export default function DemoPage() {
     const sid = sessionId ?? bot?.sessionId;
     if (!sid) return;
 
-    if (isSending) return; // single-flight
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setIsSending(true);
     setError(null);
 
@@ -222,6 +228,7 @@ export default function DemoPage() {
       setThread((prev) => prev.filter((m) => m.role !== "typing"));
       setError(e?.message ?? "Failed to send message");
     } finally {
+      sendingRef.current = false;
       setIsSending(false);
     }
   }
@@ -263,6 +270,7 @@ export default function DemoPage() {
       setThread((prev) => prev.filter((m) => m.role !== "typing"));
       setError(e?.message ?? "Failed to upload file");
     } finally {
+      sendingRef.current = false;
       setIsSending(false);
     }
   }
