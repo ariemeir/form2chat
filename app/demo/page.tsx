@@ -600,15 +600,16 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: "78%",
     fontSize: 14,
     lineHeight: 1.35,
+    color: "#111",  
   },
   userBubble: {
     background: "#111",
-    color: "#fff",
     borderRadius: 14,
     padding: "10px 12px",
     maxWidth: "78%",
     fontSize: 14,
     lineHeight: 1.35,
+    color: "#111",  
   },
   dot: {
     display: "inline-block",
