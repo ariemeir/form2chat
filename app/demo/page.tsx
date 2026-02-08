@@ -95,7 +95,7 @@ export default function DemoPage() {
   async function submit() {
     if (!bot) return;
 
-    const res = await fetch("/api/chat/submit", {
+    const res = await fetch("/api/submit", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
