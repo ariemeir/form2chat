@@ -36,6 +36,21 @@ function uid() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function randomDelay(kind: ChatResponse["kind"]) {
+  // tuned to feel human without being annoying
+  const base =
+    kind === "review" ? 700 :
+    kind === "done" ? 450 :
+    350;
+
+  const jitter = 450; // +/- range
+  return base + Math.floor(Math.random() * jitter);
+}
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
@@ -51,7 +66,6 @@ function deriveCollected(thread: ThreadMsg[]) {
 
   for (const m of thread) {
     if (m.role === "agent") {
-      // treat agent text as question prompt
       pendingQuestion = m.text;
     } else if (m.role === "user") {
       if (pendingQuestion) {
@@ -71,7 +85,6 @@ async function postJson<T>(url: string, body: any): Promise<T> {
     body: JSON.stringify(body),
   });
 
-  // If Vercel returns HTML error pages, this avoids "unexpected token <"
   const contentType = res.headers.get("content-type") || "";
   const text = await res.text();
 
@@ -83,7 +96,6 @@ async function postJson<T>(url: string, body: any): Promise<T> {
     return JSON.parse(text) as T;
   }
 
-  // fallback
   return JSON.parse(text) as T;
 }
 
@@ -105,14 +117,12 @@ export default function DemoPage() {
 
   const collected = useMemo(() => deriveCollected(thread), [thread]);
 
-  // Smooth-ish scroll to bottom on new messages
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [thread.length]);
 
-  // Read optional ?formId=...
   useEffect(() => {
     try {
       const u = new URL(window.location.href);
@@ -123,7 +133,20 @@ export default function DemoPage() {
     }
   }, []);
 
-  // Start session on mount (or formId change)
+  function replaceTypingWithAgent(text: string) {
+    setThread((prev) => {
+      const withoutTyping = prev.filter((m) => m.role !== "typing");
+      return [...withoutTyping, { id: uid(), role: "agent", text }];
+    });
+  }
+
+  function appendTyping() {
+    setThread((prev) => {
+      if (prev.length > 0 && prev[prev.length - 1].role === "typing") return prev;
+      return [...prev, { id: uid(), role: "typing" }];
+    });
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -134,7 +157,6 @@ export default function DemoPage() {
       setBot(null);
       setSessionId(null);
 
-      // show typing immediately
       setThread([{ id: uid(), role: "typing" }]);
 
       try {
@@ -144,16 +166,13 @@ export default function DemoPage() {
         setSessionId(r.sessionId);
         setBot(r);
 
+        await sleep(randomDelay(r.kind));
+        if (cancelled) return;
+
         setThread((prev) => {
           const withoutTyping = prev.filter((m) => m.role !== "typing");
           const next: ThreadMsg[] = [...withoutTyping];
-
-          if (r.kind === "ask" || r.kind === "review") {
-            next.push({ id: uid(), role: "agent", text: r.message });
-          } else if (r.kind === "done") {
-            next.push({ id: uid(), role: "agent", text: r.message });
-          }
-
+          next.push({ id: uid(), role: "agent", text: r.message });
           return next;
         });
       } catch (e: any) {
@@ -171,29 +190,14 @@ export default function DemoPage() {
     };
   }, [formId]);
 
-  function replaceTypingWithAgent(text: string) {
-    setThread((prev) => {
-      const withoutTyping = prev.filter((m) => m.role !== "typing");
-      return [...withoutTyping, { id: uid(), role: "agent", text }];
-    });
-  }
-
-  function appendTyping() {
-    setThread((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].role === "typing") return prev;
-      return [...prev, { id: uid(), role: "typing" }];
-    });
-  }
-
   async function sendText(text: string) {
     const sid = sessionId ?? bot?.sessionId;
     if (!sid) return;
 
-    if (isSending) return; // single-flight guard
+    if (isSending) return; // single-flight
     setIsSending(true);
     setError(null);
 
-    // optimistic user bubble
     setThread((prev) => [...prev, { id: uid(), role: "user", text }]);
     appendTyping();
 
@@ -207,7 +211,8 @@ export default function DemoPage() {
       setSessionId(r.sessionId);
       setBot(r);
 
-      replaceTypingWithAgent(r.kind === "done" ? r.message : r.message);
+      await sleep(randomDelay(r.kind));
+      replaceTypingWithAgent(r.message);
     } catch (e: any) {
       setThread((prev) => prev.filter((m) => m.role !== "typing"));
       setError(e?.message ?? "Failed to send message");
@@ -225,7 +230,6 @@ export default function DemoPage() {
     setIsSending(true);
     setError(null);
 
-    // show a user bubble indicating upload
     setThread((prev) => [...prev, { id: uid(), role: "user", text: `Uploaded: ${file.name}` }]);
     appendTyping();
 
@@ -248,6 +252,7 @@ export default function DemoPage() {
       setSessionId(r.sessionId);
       setBot(r);
 
+      await sleep(randomDelay(r.kind));
       replaceTypingWithAgent(r.message);
     } catch (e: any) {
       setThread((prev) => prev.filter((m) => m.role !== "typing"));
@@ -266,7 +271,7 @@ export default function DemoPage() {
   }
 
   const progressText = useMemo(() => {
-    const p = (bot && "progress" in bot) ? bot.progress : null;
+    const p = bot && "progress" in bot ? (bot as any).progress : null;
     if (!p) return null;
     const done = clamp(p.done, 0, p.total);
     return `${done}/${p.total}`;
@@ -274,9 +279,19 @@ export default function DemoPage() {
 
   const showChoiceButtons = bot?.kind === "ask" && bot.input?.type === "choice" && Array.isArray(bot.input.options);
   const showFileUpload = bot?.kind === "ask" && bot.input?.type === "file";
+  const showReviewButtons = bot?.kind === "review";
 
   return (
     <div style={styles.page}>
+      <style>{`
+        @keyframes dotFade {
+          0% { opacity: 0.2; transform: translateY(0px); }
+          20% { opacity: 0.9; transform: translateY(-1px); }
+          40% { opacity: 0.2; transform: translateY(0px); }
+          100% { opacity: 0.2; }
+        }
+      `}</style>
+
       <div style={styles.shell}>
         <div style={styles.header}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -301,23 +316,11 @@ export default function DemoPage() {
               {showCollected ? "Hide collected" : "Show collected"}
             </button>
 
-            <button
-              type="button"
-              onClick={() => void sendText("back")}
-              style={styles.smallBtn}
-              disabled={isSending}
-              title="Go back one step"
-            >
+            <button type="button" onClick={() => void sendText("back")} style={styles.smallBtn} disabled={isSending}>
               Back
             </button>
 
-            <button
-              type="button"
-              onClick={() => void sendText("restart")}
-              style={styles.smallBtn}
-              disabled={isSending}
-              title="Restart the conversation"
-            >
+            <button type="button" onClick={() => void sendText("restart")} style={styles.smallBtn} disabled={isSending}>
               Restart
             </button>
           </div>
@@ -338,7 +341,9 @@ export default function DemoPage() {
         )}
 
         <div ref={scrollRef} style={styles.thread}>
-          {thread.map((m) => {
+          {thread.map((m, index) => {
+            const isLast = index === thread.length - 1;
+
             if (m.role === "typing") {
               return (
                 <div key={m.id} style={styles.rowLeft}>
@@ -346,9 +351,9 @@ export default function DemoPage() {
                     <div style={styles.agentAvatarSmall}>A</div>
                   </div>
                   <div style={styles.bubbleAgent}>
-                    <span style={styles.typingDot} />
-                    <span style={styles.typingDot} />
-                    <span style={styles.typingDot} />
+                    <span style={{ ...styles.typingDot, animationDelay: "0ms" }} />
+                    <span style={{ ...styles.typingDot, animationDelay: "140ms" }} />
+                    <span style={{ ...styles.typingDot, animationDelay: "280ms" }} />
                   </div>
                 </div>
               );
@@ -363,7 +368,8 @@ export default function DemoPage() {
                   <div style={styles.bubbleAgent}>
                     <div style={styles.bubbleText}>{m.text}</div>
 
-                    {showChoiceButtons && m.id === thread[thread.length - 1]?.id && (
+                    {/* Choices for ask */}
+                    {showChoiceButtons && isLast && (
                       <div style={styles.choices}>
                         {bot!.kind === "ask" &&
                           bot!.input.type === "choice" &&
@@ -381,7 +387,8 @@ export default function DemoPage() {
                       </div>
                     )}
 
-                    {showFileUpload && m.id === thread[thread.length - 1]?.id && (
+                    {/* Upload for file */}
+                    {showFileUpload && isLast && (
                       <div style={styles.uploadRow}>
                         <label style={styles.uploadLabel}>
                           <input
@@ -391,7 +398,6 @@ export default function DemoPage() {
                             onChange={(e) => {
                               const f = e.target.files?.[0];
                               if (!f) return;
-                              // clear input so selecting same file again still triggers change
                               e.currentTarget.value = "";
                               void uploadFile(f);
                             }}
@@ -400,10 +406,20 @@ export default function DemoPage() {
                           Upload file
                         </label>
                         <div style={styles.subtle}>
-                          {bot.kind === "ask" && bot.input.type === "file" && bot.input.accept
-                            ? `Accepted: ${bot.input.accept}`
-                            : ""}
+                          {bot.kind === "ask" && bot.input.type === "file" && bot.input.accept ? `Accepted: ${bot.input.accept}` : ""}
                         </div>
+                      </div>
+                    )}
+
+                    {/* YES/NO buttons for review */}
+                    {showReviewButtons && isLast && (
+                      <div style={styles.choices}>
+                        <button type="button" onClick={() => void sendText("yes")} style={styles.choiceBtn} disabled={isSending}>
+                          Yes, submit
+                        </button>
+                        <button type="button" onClick={() => void sendText("no")} style={styles.choiceBtn} disabled={isSending}>
+                          No, edit
+                        </button>
                       </div>
                     )}
                   </div>
@@ -411,7 +427,6 @@ export default function DemoPage() {
               );
             }
 
-            // user
             return (
               <div key={m.id} style={styles.rowRight}>
                 <div style={styles.bubbleUser}>
@@ -435,6 +450,8 @@ export default function DemoPage() {
                 ? "Use Upload file above"
                 : showChoiceButtons
                 ? "Tap an option above or type…"
+                : showReviewButtons
+                ? "Type YES to submit or NO to edit…"
                 : "Type your reply…"
             }
             style={styles.input}
@@ -573,7 +590,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 99,
     background: "#666",
     marginRight: 6,
-    animation: "pulse 1s infinite ease-in-out",
+    animationName: "dotFade",
+    animationDuration: "900ms",
+    animationIterationCount: "infinite",
+    animationTimingFunction: "ease-in-out",
   },
 
   choices: {
