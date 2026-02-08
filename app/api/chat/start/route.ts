@@ -6,7 +6,15 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
 
-  const formId = (body as any)?.formId ?? "demo";
+  const formId = (body as any)?.formId;
+
+  if (!formId) {
+    return NextResponse.json(
+      { error: "missing_formId" },
+      { status: 400 }
+  );
+  }
+
   const candidateToken = (body as any)?.candidateToken ?? null;
 
   // For now we just pass through to engine.

@@ -97,7 +97,7 @@ export default function DemoPage({
   const isCandidateFlow = !!candidateToken;
 
   const sendingRef = useRef(false);
-  const [formId, setFormId] = useState<string>("demo");
+  const [formId, setFormId] = useState<string | null>(null);
 
   const [bot, setBot] = useState<ChatResponse | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -114,6 +114,8 @@ export default function DemoPage({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const [token, setToken] = useState<string | null>(candidateToken ?? null);
+
   const collected = useMemo(() => deriveCollected(thread), [thread]);
 
   useEffect(() => {
@@ -125,8 +127,17 @@ export default function DemoPage({
   useEffect(() => {
     try {
       const u = new URL(window.location.href);
+
+      const qToken = u.searchParams.get("token");
+      if (qToken) setToken(qToken);
+
       const qForm = u.searchParams.get("formId");
       if (qForm) setFormId(qForm);
+
+      if (!qForm) setError("Missing formId in URL");
+
+      console.log("demo page formId from query =", qForm);
+
     } catch {
       // ignore
     }
@@ -147,6 +158,9 @@ export default function DemoPage({
   }
 
   useEffect(() => {
+
+    if (!formId) return;
+
     let cancelled = false;
 
     async function start() {
@@ -161,10 +175,11 @@ export default function DemoPage({
       setThread([{ id: uid(), role: "typing" }]);
 
       try {
-        const r = await postJson<ChatResponse>("/api/chat/start", {
+        const r = await postJson("/api/chat/start", {
           formId,
-          candidateToken: candidateToken ?? null,
+          candidateToken: token,
         });
+
         if (cancelled) return;
 
         setSessionId(r.sessionId);
@@ -231,25 +246,24 @@ export default function DemoPage({
 	  : [];
 
     try {
-  //    const r = await postJson<ChatResponse>("/api/submit", {
-  //      formId,
-  //      sessionId: sid,
-  //      candidateToken: candidateToken ?? null,
-  //	references,
-  //    });
 
-  //    setSessionId(r.sessionId);
-  //    setBot(r);
+    const body =
+      formId === "candidate"
+	? {
+	    formId,
+	    sessionId: sid,
+	    candidateToken: token ?? null,
+	    references,
+	  }
+	: {
+	    formId,
+	    sessionId: sid,
+	    candidateToken: token ?? null, // reference token for reference flow (rename later)
+	    answers,
+	  };
 
-  //    await sleep(randomDelay(r.kind));
-  //    replaceTypingWithAgent(r.message);
+    const r = await postJson<SubmitResponse>("/api/submit", body);
 
-  const r = await postJson<SubmitResponse>("/api/submit", {
-    formId,
-    sessionId: sid,
-    candidateToken: candidateToken ?? null,
-    references,
-  });
 
   if (!r.success) {
     throw new Error(r.error ?? "Submit failed");

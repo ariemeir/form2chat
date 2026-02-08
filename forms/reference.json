@@ -1,0 +1,51 @@
+{
+  "id": "reference",
+  "title": "Reference for {{candidate_name}}",
+  "description": "{{candidate_name}} has listed you as a professional reference for a position at {{agency_name}}. This should take about 5 minutes.",
+  "fields": [
+    {
+      "id": "how_do_you_know_candidate",
+      "type": "text",
+      "label": "How do you know {{candidate_name}}?",
+      "required": true
+    },
+    {
+      "id": "work_type",
+      "type": "text",
+      "label": "What type of care or work did they do?",
+      "required": true
+    },
+    {
+      "id": "duration_worked_together",
+      "type": "text",
+      "label": "How long did you work with them?",
+      "required": true
+    },
+    {
+      "id": "rehire",
+      "type": "select",
+      "label": "Would you rehire this person?",
+      "required": true,
+      "options": ["yes", "no", "unsure"]
+    },
+    {
+      "id": "concerns",
+      "type": "text",
+      "label": "Any concerns about reliability, safety, or professionalism? (optional)",
+      "required": false
+    },
+    {
+      "id": "additional_comments",
+      "type": "text",
+      "label": "Additional comments (optional)",
+      "required": false
+    },
+    {
+      "id": "other_information",
+      "type": "text",
+      "label": "Any other information you'd like to share? (optional)",
+      "required": false
+    }
+  ]
+}
+
