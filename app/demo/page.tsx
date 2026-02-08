@@ -221,18 +221,31 @@ export default function DemoPage() {
       {/* review */}
       {bot?.kind === "review" && (
         <div style={{ marginTop: 16 }}>
-          <pre
-            style={{
-              background: "#fafafa",
-              padding: 12,
-              borderRadius: 12,
-              border: "1px solid #eee",
-              fontSize: 12,
-            }}
-          >
-            {JSON.stringify(bot.answers, null, 2)}
-          </pre>
+<div
+  style={{
+    background: "#fafafa",
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #eee",
+    fontSize: 12,
+  }}
+>
+  {(bot.answers?.references ?? []).map((ref: any, idx: number) => (
+    <div key={idx} style={{ marginBottom: 12 }}>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>
+        Reference {idx + 1}
+      </div>
 
+      {/* NOTE: this displays keys in object insertion order (can vary). */}
+      {Object.entries(ref).map(([k, v]) => (
+        <div key={k} style={{ display: "flex", gap: 8 }}>
+          <div style={{ minWidth: 180, color: "#444" }}>{k}</div>
+          <div style={{ whiteSpace: "pre-wrap" }}>{String(v ?? "")}</div>
+        </div>
+      ))}
+    </div>
+  ))}
+</div>
           <button
             onClick={submit}
             style={{
