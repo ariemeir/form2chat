@@ -213,11 +213,23 @@ export default function DemoPage({
     setThread((prev) => [...prev, { id: uid(), role: "user", text: "Submit" }]);
     appendTyping();
 
+    const answers = (bot as any)?.answers_json;
+    const refs = answers?.__refs ?? [];
+    const draft = answers?.__draft ?? null;
+
+    const references =
+      refs.length > 0
+	? refs
+	: draft && Object.keys(draft).length > 0
+	  ? [draft]
+	  : [];
+
     try {
       const r = await postJson<ChatResponse>("/api/submit", {
         formId,
         sessionId: sid,
         candidateToken: candidateToken ?? null,
+	references,
       });
 
       setSessionId(r.sessionId);
