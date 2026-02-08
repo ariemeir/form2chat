@@ -38,6 +38,10 @@ export async function POST(req: Request) {
       null;
 
     const refsRaw = answers?.__refs;
+ 
+    console.log("AAA SUBMIT engineResp keys:", Object.keys(engineResp as any));
+    console.log("SUBMIT answers_json:", JSON.stringify((engineResp as any)?.answers_json ?? null));
+    console.log("SUBMIT answers:", JSON.stringify((engineResp as any)?.answers ?? null));
 
     if (!Array.isArray(refsRaw) || refsRaw.length < 1) {
       return NextResponse.json(
