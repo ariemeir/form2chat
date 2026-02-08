@@ -10,6 +10,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.95.3",
     "better-sqlite3": "^12.6.2",
     "next": "16.1.6",
     "react": "19.2.3",

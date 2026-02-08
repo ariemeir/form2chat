@@ -41,10 +41,8 @@ function sleep(ms: number) {
 }
 
 function randomDelay(kind: ChatResponse["kind"]) {
-  // tuned to feel human without being annoying
   const base = kind === "review" ? 700 : kind === "done" ? 450 : 350;
-
-  const jitter = 450; // +/- range
+  const jitter = 450;
   return base + Math.floor(Math.random() * jitter);
 }
 
@@ -52,11 +50,6 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-/**
- * Derive "Collected so far" from the chat transcript:
- * - We pair each agent prompt with the subsequent user reply.
- * - Works even if backend doesn't return draft answers yet.
- */
 function deriveCollected(thread: ThreadMsg[]) {
   const pairs: Array<{ question: string; answer: string }> = [];
   let pendingQuestion: string | null = null;
@@ -76,7 +69,6 @@ function deriveCollected(thread: ThreadMsg[]) {
 }
 
 async function postJson<T>(path: string, body: any): Promise<T> {
-  // HARD normalize URL to same-origin
   const url =
     typeof window !== "undefined"
       ? new URL(path, window.location.origin).toString()
@@ -84,9 +76,7 @@ async function postJson<T>(path: string, body: any): Promise<T> {
 
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
@@ -99,7 +89,13 @@ async function postJson<T>(path: string, body: any): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-export default function DemoPage() {
+export default function DemoPage({
+  candidateToken,
+}: {
+  candidateToken?: string;
+}) {
+  const isCandidateFlow = !!candidateToken;
+
   const sendingRef = useRef(false);
   const [formId, setFormId] = useState<string>("demo");
 
@@ -112,7 +108,6 @@ export default function DemoPage() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Hidden by default
   const [showCollected, setShowCollected] = useState(false);
   const [restartNonce, setRestartNonce] = useState(0);
 
@@ -166,7 +161,10 @@ export default function DemoPage() {
       setThread([{ id: uid(), role: "typing" }]);
 
       try {
-        const r = await postJson<ChatResponse>("/api/chat/start", { formId });
+        const r = await postJson<ChatResponse>("/api/chat/start", {
+          formId,
+          candidateToken: candidateToken ?? null,
+        });
         if (cancelled) return;
 
         setSessionId(r.sessionId);
@@ -197,10 +195,9 @@ export default function DemoPage() {
     return () => {
       cancelled = true;
     };
-  }, [formId, restartNonce]);
+  }, [formId, restartNonce, candidateToken]);
 
   function restartFromBeginning() {
-    // Hard restart: start a new session from the first field, clear transcript.
     setRestartNonce((n) => n + 1);
   }
 
@@ -213,12 +210,15 @@ export default function DemoPage() {
     setIsSending(true);
     setError(null);
 
-    // reflect action
     setThread((prev) => [...prev, { id: uid(), role: "user", text: "Submit" }]);
     appendTyping();
 
     try {
-      const r = await postJson<ChatResponse>("/api/submit", { formId, sessionId: sid });
+      const r = await postJson<ChatResponse>("/api/submit", {
+        formId,
+        sessionId: sid,
+        candidateToken: candidateToken ?? null,
+      });
 
       setSessionId(r.sessionId);
       setBot(r);
@@ -251,6 +251,7 @@ export default function DemoPage() {
         formId,
         sessionId: sid,
         text,
+        candidateToken: candidateToken ?? null,
       });
 
       setSessionId(r.sessionId);
@@ -286,17 +287,17 @@ export default function DemoPage() {
   const isDone = bot?.kind === "done";
 
   const showChoiceButtons =
-    bot?.kind === "ask" && bot.input?.type === "choice" && Array.isArray(bot.input.options);
+    bot?.kind === "ask" &&
+    bot.input?.type === "choice" &&
+    Array.isArray(bot.input.options);
 
   const showFileUpload = bot?.kind === "ask" && bot.input?.type === "file";
 
-  // Autofocus input after the agent produces a new prompt (when typing is possible).
   useEffect(() => {
     if (isSending) return;
     if (showFileUpload) return;
     if (!bot || bot.kind !== "ask") return;
 
-    // Focus once the typing indicator has been replaced by the agent message.
     const last = thread[thread.length - 1];
     if (!last || last.role !== "agent") return;
 
@@ -318,24 +319,22 @@ export default function DemoPage() {
 
       <div style={styles.shell}>
         <div style={styles.header}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={styles.agentAvatar}>A</div>
+          <div style={styles.headerLeft}>
+            <div style={styles.avatar}>A</div>
             <div>
               <div style={styles.title}>Reference Chat</div>
               <div style={styles.subtle}>
-                {progressText ? `Progress ${progressText}` : " "}
-                {sessionId ? ` • Session ${sessionId.slice(0, 8)}…` : ""}
+                {progressText ? `Progress ${progressText}` : ""}
               </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <button
               type="button"
               onClick={() => setShowCollected((v) => !v)}
               style={styles.smallBtn}
               disabled={collected.length === 0}
-              title="Toggle collected so far"
             >
               {showCollected ? "Hide collected" : "Show collected"}
             </button>
@@ -349,19 +348,21 @@ export default function DemoPage() {
               Back
             </button>
 
-            <button
-              type="button"
-              onClick={restartFromBeginning}
-              style={styles.smallBtn}
-              disabled={isSending}
-            >
-              Restart
-            </button>
+            {!isCandidateFlow && (
+              <button
+                type="button"
+                onClick={restartFromBeginning}
+                style={styles.smallBtn}
+                disabled={isSending}
+              >
+                Restart
+              </button>
+            )}
           </div>
         </div>
 
         {showCollected && collected.length > 0 && (
-          <div style={styles.collectedPanel}>
+          <div style={styles.collected}>
             <div style={styles.collectedTitle}>Collected so far</div>
             <div style={styles.collectedList}>
               {collected.slice(-8).map((p, idx) => (
@@ -375,19 +376,15 @@ export default function DemoPage() {
         )}
 
         <div ref={scrollRef} style={styles.thread}>
-          {thread.map((m, index) => {
-            const isLast = index === thread.length - 1;
-
+          {thread.map((m) => {
             if (m.role === "typing") {
               return (
-                <div key={m.id} style={styles.rowLeft}>
-                  <div style={styles.avatarColumn}>
-                    <div style={styles.agentAvatarSmall}>A</div>
-                  </div>
-                  <div style={styles.bubbleAgent}>
-                    <span style={{ ...styles.typingDot, animationDelay: "0ms" }} />
-                    <span style={{ ...styles.typingDot, animationDelay: "140ms" }} />
-                    <span style={{ ...styles.typingDot, animationDelay: "280ms" }} />
+                <div key={m.id} style={styles.agentRow}>
+                  <div style={styles.avatarSmall}>A</div>
+                  <div style={styles.agentBubble}>
+                    <span style={{ ...styles.dot, animationDelay: "0ms" }} />
+                    <span style={{ ...styles.dot, animationDelay: "140ms" }} />
+                    <span style={{ ...styles.dot, animationDelay: "280ms" }} />
                   </div>
                 </div>
               );
@@ -395,104 +392,86 @@ export default function DemoPage() {
 
             if (m.role === "agent") {
               return (
-                <div key={m.id} style={styles.rowLeft}>
-                  <div style={styles.avatarColumn}>
-                    <div style={styles.agentAvatarSmall}>A</div>
-                  </div>
-                  <div style={styles.bubbleAgent}>
-                    <div style={styles.bubbleText}>{m.text}</div>
-
-                    {showChoiceButtons &&
-                      isLast &&
-                      bot?.kind === "ask" &&
-                      bot.input.type === "choice" && (
-                        <div style={styles.choices}>
-                          {bot.input.options.map((opt) => (
-                            <button
-                              key={opt}
-                              type="button"
-                              onClick={() => void sendText(opt)}
-                              style={styles.choiceBtn}
-                              disabled={isSending || isReview || isDone}
-                            >
-                              {opt}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                    {isReview && isLast && (
-                      <div style={styles.choices}>
-                        <button
-                          type="button"
-                          onClick={() => void submit()}
-                          style={styles.choiceBtn}
-                          disabled={isSending}
-                        >
-                          Submit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={restartFromBeginning}
-                          style={styles.choiceBtn}
-                          disabled={isSending}
-                        >
-                          Restart
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                <div key={m.id} style={styles.agentRow}>
+                  <div style={styles.avatarSmall}>A</div>
+                  <div style={styles.agentBubble}>{m.text}</div>
                 </div>
               );
             }
 
             return (
-              <div key={m.id} style={styles.rowRight}>
-                <div style={styles.bubbleUser}>
-                  <div style={styles.bubbleText}>{m.text}</div>
-                </div>
+              <div key={m.id} style={styles.userRow}>
+                <div style={styles.userBubble}>{m.text}</div>
               </div>
             );
           })}
+
+          {error && <div style={styles.error}>{error}</div>}
         </div>
 
-        {error && <div style={styles.error}>{error}</div>}
+        <div style={styles.footer}>
+          {isReview ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => void submit()}
+                style={styles.sendBtn}
+                disabled={isSending}
+              >
+                Submit
+              </button>
 
-        <form onSubmit={onSubmit} style={styles.composer}>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              isDone
-                ? "Done"
-                : showFileUpload
-                ? "Use Upload file above"
-                : showChoiceButtons
-                ? "Tap an option above or type…"
-                : isReview
-                ? "Review above"
-                : "Type your reply…"
-            }
-            style={styles.input}
-            disabled={isSending || isDone || isReview || showFileUpload}
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            style={{
-              ...styles.sendBtn,
-              opacity: isSending || isDone || isReview || showFileUpload ? 0.5 : 1,
-              cursor:
-                isSending || isDone || isReview || showFileUpload
-                  ? "not-allowed"
-                  : "pointer",
-            }}
-            disabled={isSending || isDone || isReview || showFileUpload}
-          >
-            Send
-          </button>
-        </form>
+              {!isCandidateFlow && (
+                <button
+                  type="button"
+                  onClick={restartFromBeginning}
+                  style={styles.smallBtn}
+                  disabled={isSending}
+                >
+                  Restart
+                </button>
+              )}
+            </div>
+          ) : isDone ? (
+            <div style={styles.subtle}>Done</div>
+          ) : showChoiceButtons ? (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {bot?.kind === "ask" &&
+                bot.input.type === "choice" &&
+                bot.input.options.map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    style={styles.smallBtn}
+                    onClick={() => void sendText(opt)}
+                    disabled={isSending}
+                  >
+                    {opt}
+                  </button>
+                ))}
+            </div>
+          ) : showFileUpload ? (
+            <div style={styles.subtle}>File upload not wired yet.</div>
+          ) : (
+            <form onSubmit={onSubmit} style={styles.form}>
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={isSending}
+                placeholder="Type your reply…"
+                style={styles.input}
+              />
+              <button
+                type="submit"
+                style={styles.sendBtn}
+                disabled={isSending || !input.trim()}
+              >
+                Send
+              </button>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -500,152 +479,154 @@ export default function DemoPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    height: "100dvh",
-    minHeight: "100dvh",
-    background: "#f5f6f8",
+    background: "#f7f7f7",
+    minHeight: "100vh",
     display: "flex",
     justifyContent: "center",
-    padding: 16,
+    padding: 24,
   },
   shell: {
-    width: "100%",
-    maxWidth: 860,
+    width: "min(860px, 100%)",
     background: "#fff",
-    border: "1px solid #e7e8ea",
-    borderRadius: 16,
-    boxShadow: "0 6px 24px rgba(0,0,0,0.06)",
+    borderRadius: 18,
+    boxShadow: "0 6px 30px rgba(0,0,0,0.06)",
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",
-    height: "calc(100dvh - 32px)",
+    height: "min(86vh, 880px)",
   },
   header: {
-    padding: "14px 16px",
-    borderBottom: "1px solid #eee",
     display: "flex",
     justifyContent: "space-between",
     gap: 12,
     alignItems: "center",
+    padding: "14px 16px",
+    borderBottom: "1px solid #eee",
+    background: "#fff",
   },
-  title: { fontSize: 16, fontWeight: 700, lineHeight: 1.2 },
-  subtle: { fontSize: 12, color: "#666" },
-
-  agentAvatar: {
+  headerLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  },
+  avatar: {
     width: 36,
     height: 36,
     borderRadius: 999,
     background: "#111",
     color: "#fff",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    display: "grid",
+    placeItems: "center",
     fontWeight: 800,
   },
-  agentAvatarSmall: {
+  avatarSmall: {
     width: 28,
     height: 28,
     borderRadius: 999,
     background: "#111",
     color: "#fff",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    display: "grid",
+    placeItems: "center",
     fontWeight: 800,
     fontSize: 12,
+    flex: "0 0 auto",
+    marginTop: 2,
   },
-  avatarColumn: { width: 36, display: "flex", justifyContent: "center" },
-
-  collectedPanel: {
-    borderBottom: "1px solid #eee",
+  title: {
+    fontWeight: 800,
+    fontSize: 14,
+  },
+  subtle: {
+    fontSize: 12,
+    color: "#666",
+  },
+  thread: {
+    flex: 1,
+    padding: 16,
+    overflowY: "auto",
     background: "#fafafa",
+  },
+  agentRow: {
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
+  userRow: {
+    display: "flex",
+    justifyContent: "flex-end",
+    marginBottom: 10,
+  },
+  agentBubble: {
+    background: "#fff",
+    border: "1px solid #eee",
+    borderRadius: 14,
+    padding: "10px 12px",
+    maxWidth: "78%",
+    fontSize: 14,
+    lineHeight: 1.35,
+  },
+  userBubble: {
+    background: "#111",
+    color: "#fff",
+    borderRadius: 14,
+    padding: "10px 12px",
+    maxWidth: "78%",
+    fontSize: 14,
+    lineHeight: 1.35,
+  },
+  dot: {
+    display: "inline-block",
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    background: "#999",
+    marginRight: 6,
+    animation: "dotFade 1.2s infinite ease-in-out",
+  },
+  collected: {
+    borderBottom: "1px solid #eee",
+    background: "#fff",
     padding: "10px 16px",
   },
   collectedTitle: {
     fontSize: 12,
-    fontWeight: 700,
-    color: "#444",
+    fontWeight: 800,
     marginBottom: 8,
+    color: "#333",
   },
-  collectedList: { display: "flex", flexDirection: "column", gap: 8 },
-  collectedRow: {
+  collectedList: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 12,
-  },
-  collectedQ: { fontSize: 12, color: "#555" },
-  collectedA: { fontSize: 12, color: "#111", wordBreak: "break-word" },
-
-  thread: {
-    flex: 1,
-    padding: "16px 12px",
-    overflowY: "auto",
-    background: "#ffffff",
-  },
-  rowLeft: {
-    display: "flex",
-    gap: 10,
-    alignItems: "flex-start",
-    marginBottom: 12,
-  },
-  rowRight: {
-    display: "flex",
-    justifyContent: "flex-end",
-    marginBottom: 12,
-  },
-  bubbleAgent: {
-    maxWidth: "72%",
-    background: "#f2f3f5",
-    border: "1px solid #e7e8ea",
-    borderRadius: 16,
-    padding: "10px 12px",
-  },
-  bubbleUser: {
-    maxWidth: "72%",
-    background: "#111",
-    color: "#fff",
-    borderRadius: 16,
-    padding: "10px 12px",
-  },
-  bubbleText: {
-    whiteSpace: "pre-wrap",
-    fontSize: 14,
-    lineHeight: 1.35,
-  },
-
-  typingDot: {
-    display: "inline-block",
-    width: 6,
-    height: 6,
-    borderRadius: 99,
-    background: "#666",
-    marginRight: 6,
-    animationName: "dotFade",
-    animationDuration: "900ms",
-    animationIterationCount: "infinite",
-    animationTimingFunction: "ease-in-out",
-  },
-
-  choices: {
-    marginTop: 10,
-    display: "flex",
-    flexWrap: "wrap",
     gap: 8,
   },
-  choiceBtn: {
-    border: "1px solid #ddd",
-    background: "#fff",
-    borderRadius: 999,
-    padding: "6px 10px",
-    fontSize: 13,
-    cursor: "pointer",
+  collectedRow: {
+    display: "grid",
+    gap: 2,
+    padding: "8px 10px",
+    borderRadius: 12,
+    background: "#f7f7f7",
+    border: "1px solid #eee",
   },
-
-  composer: {
+  collectedQ: {
+    fontSize: 12,
+    color: "#666",
+  },
+  collectedA: {
+    fontSize: 13,
+    color: "#111",
+    fontWeight: 700,
+  },
+  footer: {
     display: "flex",
     gap: 10,
     padding: 12,
     borderTop: "1px solid #eee",
     background: "#fff",
+  },
+  form: {
+    display: "flex",
+    gap: 10,
+    width: "100%",
   },
   input: {
     flex: 1,
@@ -663,6 +644,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "10px 14px",
     fontSize: 14,
     fontWeight: 700,
+    cursor: "pointer",
   },
   smallBtn: {
     border: "1px solid #ddd",
