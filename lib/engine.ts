@@ -3,23 +3,10 @@ import { loadForm, Field } from "./form";
 import crypto from "crypto";
 import fs from "fs";
 
-export type ChatResponse =
-  | {
-      kind: "ask";
-      sessionId: string;
-      fieldId: string;
-      message: string;
-      input: InputHint;
-      progress: { done: number; total: number };
-    }
-  | {
-      kind: "review";
-      sessionId: string;
-      message: string;
-      answers: Record<string, any>;
-      progress: { done: number; total: number };
-    }
-  | { kind: "done"; sessionId: string; message: string };
+const DEBUG = process.env.DEBUG_ENGINE === "1";
+function dlog(...args: any[]) {
+  if (DEBUG) console.log(...args);
+}
 
 export type InputHint =
   | { type: "text" }
@@ -28,23 +15,71 @@ export type InputHint =
   | { type: "choice"; options: string[] }
   | { type: "file"; accept?: string };
 
-function getSession(sessionId: string) {
-  return db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any | undefined;
-}
+type EngineStatus = "in_progress" | "submitted";
 
-function upsertSession(sessionId: string, formId: string) {
-  const s = getSession(sessionId);
-  if (s) return s;
-  db.prepare(
-    "INSERT INTO sessions (id, form_id, field_index, answers_json, status, updated_at) VALUES (?, ?, 0, '{}', 'in_progress', ?)"
-  ).run(sessionId, formId, nowIso());
-  return getSession(sessionId)!;
-}
-
-type EngineState = {
+/**
+ * Session state stored in sessions.answers_json
+ */
+export type EngineState = {
   __refs: Array<Record<string, any>>; // completed reference objects
   __draft: Record<string, any>; // current reference being filled
 };
+
+/**
+ * IMPORTANT: We now include `answers_json` in engine responses (esp. submitSession),
+ * so /api/submit can reliably access persisted state without re-querying.
+ *
+ * Architecturally, /api/submit SHOULD read from storage directly long-term,
+ * but this unblocks you immediately with minimal surface-area change.
+ */
+type BaseResponse = {
+  sessionId: string;
+  answers_json: EngineState;
+};
+
+export type ChatResponse =
+  | (BaseResponse & {
+      kind: "ask";
+      fieldId: string;
+      message: string;
+      input: InputHint;
+      progress: { done: number; total: number };
+    })
+  | (BaseResponse & {
+      kind: "review";
+      message: string;
+      answers: Record<string, any>;
+      progress: { done: number; total: number };
+    })
+  | (BaseResponse & { kind: "done"; message: string });
+
+export type DbSessionRow = {
+  id: string;
+  form_id: string;
+  field_index: number;
+  answers_json: string;
+  status: EngineStatus;
+  updated_at: string;
+} & Record<string, any>;
+
+/**
+ * Exported so /api/submit can optionally fetch persisted state cleanly
+ * without relying on engine return values.
+ */
+export function getSessionRow(sessionId: string): DbSessionRow | undefined {
+  return db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as DbSessionRow | undefined;
+}
+
+function upsertSession(sessionId: string, formId: string): DbSessionRow {
+  const s = getSessionRow(sessionId);
+  if (s) return s;
+
+  db.prepare(
+    "INSERT INTO sessions (id, form_id, field_index, answers_json, status, updated_at) VALUES (?, ?, 0, '{}', 'in_progress', ?)"
+  ).run(sessionId, formId, nowIso());
+
+  return getSessionRow(sessionId)!;
+}
 
 function parseState(json: string): EngineState {
   try {
@@ -68,7 +103,7 @@ function parseState(json: string): EngineState {
   }
 }
 
-function saveState(sessionId: string, fieldIndex: number, state: EngineState, status: "in_progress" | "submitted") {
+function saveState(sessionId: string, fieldIndex: number, state: EngineState, status: EngineStatus) {
   db.prepare("UPDATE sessions SET field_index = ?, answers_json = ?, status = ?, updated_at = ? WHERE id = ?").run(
     fieldIndex,
     JSON.stringify(state),
@@ -98,7 +133,7 @@ function hintForField(field: Field): InputHint {
 
 /**
  * ACKS: keep for conversational feel *during data collection* only.
- * We explicitly do NOT apply ACKs to review/done, per your requirement.
+ * We explicitly do NOT apply ACKs to review/done.
  */
 const ACKS = ["Got it.", "Perfect — let’s keep going!", "Nice.", "Awesome, thanks."];
 
@@ -159,7 +194,7 @@ function validate(field: Field, raw: string): { ok: true; value: any } | { ok: f
   return { ok: true, value: raw };
 }
 
-function progressFor(formId: string, session: any, form: ReturnType<typeof loadForm>) {
+function progressFor(formId: string, session: DbSessionRow, form: ReturnType<typeof loadForm>) {
   const state = parseState(session.answers_json);
   const fieldsPer = form.fields.length;
   const totalRefs = Math.max(1, form.targetCount ?? 1);
@@ -213,8 +248,8 @@ function buildCleanSummary(form: ReturnType<typeof loadForm>, state: EngineState
 }
 
 /**
- * Review payload: include both:
- * - references: raw values per ref (stable ids)
+ * Review payload:
+ * - references: raw values per ref
  * - fields: id->label mapping for deterministic UI rendering
  */
 function buildReviewPayload(form: ReturnType<typeof loadForm>, state: EngineState) {
@@ -238,6 +273,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
     return {
       kind: "review",
       sessionId,
+      answers_json: state,
       message: `To quickly review, does everything look right?\n\n${summary}`,
       answers: buildReviewPayload(form, state),
       progress: { done: total, total },
@@ -251,6 +287,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
     return {
       kind: "ask",
       sessionId,
+      answers_json: state,
       fieldId: field.id,
       message: `${header}\n\nPlease upload the file using the upload button below.`,
       input: hintForField(field),
@@ -261,6 +298,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
   return {
     kind: "ask",
     sessionId,
+    answers_json: state,
     fieldId: field.id,
     message: `${header}\n\n${(field as any).label ?? field.id}`,
     input: hintForField(field),
@@ -275,7 +313,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
  */
 function goBackOne(formId: string, sessionId: string): ChatResponse {
   const form = loadForm(formId);
-  const session = getSession(sessionId);
+  const session = getSessionRow(sessionId);
   if (!session) return startOrContinue(formId, sessionId);
 
   const p = progressFor(formId, session, form);
@@ -326,7 +364,13 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
   const session = upsertSession(sid, formId);
 
   if (session.status === "submitted") {
-    return { kind: "done", sessionId: sid, message: "This conversation is already submitted. Thanks!" };
+    const state = parseState(session.answers_json);
+    return {
+      kind: "done",
+      sessionId: sid,
+      answers_json: state,
+      message: "This conversation is already submitted. Thanks!",
+    };
   }
 
   const p = progressFor(formId, session, form);
@@ -338,6 +382,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
     return {
       kind: "review",
       sessionId: sid,
+      answers_json: p.state,
       message: `To quickly review, does everything look right?\n\n${summary}`,
       answers: buildReviewPayload(form, p.state),
       progress: { done: p.total, total: p.total },
@@ -351,6 +396,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
     return {
       kind: "ask",
       sessionId: sid,
+      answers_json: p.state,
       fieldId: field.id,
       message: `${header}\n\nPlease upload the file using the upload button below.`,
       input: hintForField(field),
@@ -361,6 +407,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
   return {
     kind: "ask",
     sessionId: sid,
+    answers_json: p.state,
     fieldId: field.id,
     message: `${header}\n\n${(field as any).label ?? field.id}`,
     input: hintForField(field),
@@ -371,7 +418,8 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
 export function handleUserMessage(formId: string, sessionId: string, userText: string): ChatResponse {
   const form = loadForm(formId);
   const session = upsertSession(sessionId, formId);
-  console.log("ENGINE before", {
+
+  dlog("ENGINE before", {
     formId,
     sessionId,
     userText,
@@ -384,11 +432,11 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
   const cmd = userText.trim().toLowerCase();
   if (cmd === "restart") {
     saveState(sessionId, 0, { __refs: [], __draft: {} }, "in_progress");
-    console.log("ENGINE after restart");
+    dlog("ENGINE after restart");
     return startOrContinue(formId, sessionId);
   }
   if (cmd === "back") {
-    console.log("ENGINE after back");
+    dlog("ENGINE after back");
     return goBackOne(formId, sessionId);
   }
 
@@ -396,11 +444,12 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
 
   // finished all refs -> review (clean, no ACK)
   if (p.doneRefs >= p.totalRefs) {
-    console.log("ENGINE after review");
+    dlog("ENGINE after review");
     const summary = buildCleanSummary(form, state);
     return {
       kind: "review",
       sessionId,
+      answers_json: state,
       message: `To quickly review, does everything look right?\n\n${summary}`,
       answers: buildReviewPayload(form, state),
       progress: { done: p.total, total: p.total },
@@ -411,10 +460,11 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
   const field = form.fields[i];
 
   if (field.type === "file") {
-    console.log("ENGINE after file");
+    dlog("ENGINE after file");
     return {
       kind: "ask",
       sessionId,
+      answers_json: state,
       fieldId: field.id,
       message: "Please upload the file using the upload button below.",
       input: hintForField(field),
@@ -424,10 +474,11 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
 
   const v = validate(field, userText);
   if (!v.ok) {
-    console.log("ENGINE after validate");
+    dlog("ENGINE after validate");
     return {
       kind: "ask",
       sessionId,
+      answers_json: state,
       fieldId: field.id,
       message: v.error,
       input: hintForField(field),
@@ -448,19 +499,19 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
     // if more refs remain, reset field_index to 0 and keep going
     if (state.__refs.length < (form.targetCount ?? 1)) {
       saveState(sessionId, 0, state, "in_progress");
-      console.log("ENGINE after commit ref, continue");
+      dlog("ENGINE after commit ref, continue");
       return withAck(responseFromState(form, sessionId, state, 0), state);
     }
 
     // otherwise go to review (responseFromState will be review; withAck is a no-op for review)
     saveState(sessionId, 0, state, "in_progress");
-    console.log("ENGINE after commit ref, review");
+    dlog("ENGINE after commit ref, review");
     return responseFromState(form, sessionId, state, 0);
   }
 
   // continue within this reference
   saveState(sessionId, nextFieldIndex, state, "in_progress");
-  console.log("ENGINE after advance");
+  dlog("ENGINE after advance");
   return withAck(responseFromState(form, sessionId, state, nextFieldIndex), state);
 }
 
@@ -513,29 +564,78 @@ export function recordFileAndAdvance(params: {
   return res.kind === "ask" ? withAck(res, state) : res;
 }
 
+/**
+ * Draft completion check used as a safety net at submit time.
+ * (Ideally, the engine always commits draft -> refs upon completion, which it does,
+ * but this prevents edge cases from blocking submission.)
+ */
+function isDraftComplete(form: ReturnType<typeof loadForm>, draft: Record<string, any> | undefined | null): boolean {
+  if (!draft || typeof draft !== "object") return false;
+
+  for (const f of form.fields) {
+    const v = (draft as any)[f.id];
+
+    // if field required, require a non-empty value
+    if (f.required) {
+      if (v === undefined || v === null) return false;
+      if (typeof v === "string" && v.trim() === "") return false;
+    }
+
+    // if the draft has started (any key set), you might still want strict completeness
+    // for all fields (required or not) before treating it as a reference at submit time.
+  }
+
+  // stricter: if draft has any keys, require all fields to exist
+  const started = Object.keys(draft).length > 0;
+  if (!started) return false;
+
+  for (const f of form.fields) {
+    const v = (draft as any)[f.id];
+    if (v === undefined || v === null) return false;
+    if (typeof v === "string" && v.trim() === "") return false;
+  }
+
+  return true;
+}
+
+function commitDraftIfComplete(form: ReturnType<typeof loadForm>, state: EngineState): EngineState {
+  if (state.__refs.length > 0) return state; // don't mutate behavior if refs already exist
+  if (isDraftComplete(form, state.__draft)) {
+    state.__refs.push({ ...state.__draft });
+    state.__draft = {};
+  }
+  return state;
+}
+
 export function submitSession(formId: string, sessionId: string): ChatResponse {
-  const session = getSession(sessionId);
-  if (!session) return { kind: "done", sessionId, message: "Session not found." };
+  const session = getSessionRow(sessionId);
+  if (!session) {
+    return { kind: "done", sessionId, answers_json: { __refs: [], __draft: {} }, message: "Session not found." };
+  }
 
   const form = loadForm(formId);
-  const p = progressFor(formId, session, form);
+
+  // Load + safety-commit draft if needed (prevents __refs empty edge case)
+  const state = commitDraftIfComplete(form, parseState(session.answers_json));
 
   // Persist submission (append-only)
   db.prepare("INSERT INTO submissions (id, session_id, form_id, answers_json) VALUES (?, ?, ?, ?)").run(
     crypto.randomUUID(),
     sessionId,
     formId,
-    session.answers_json
+    JSON.stringify(state)
   );
 
   // Mark session submitted
-  saveState(sessionId, p.fieldIndex, p.state, "submitted");
+  const p = progressFor(formId, session, form);
+  saveState(sessionId, p.fieldIndex, state, "submitted");
 
-  // Return same clean summary, no ACKs.
-  const summary = buildCleanSummary(form, p.state);
+  // Return clean summary, no ACKs.
+  const summary = buildCleanSummary(form, state);
   return {
     kind: "done",
     sessionId,
+    answers_json: state,
     message: `Submitted. Here’s the information you provided:\n\n${summary}`,
   };
 }
