@@ -201,6 +201,12 @@ export default function DemoPage({
     setRestartNonce((n) => n + 1);
   }
 
+  type SubmitResponse = {
+    success: boolean;
+    references_created?: number;
+    error?: string;
+  };
+
   async function submit() {
     const sid = sessionId ?? bot?.sessionId;
     if (!sid) return;
@@ -225,18 +231,35 @@ export default function DemoPage({
 	  : [];
 
     try {
-      const r = await postJson<ChatResponse>("/api/submit", {
-        formId,
-        sessionId: sid,
-        candidateToken: candidateToken ?? null,
-	references,
-      });
+  //    const r = await postJson<ChatResponse>("/api/submit", {
+  //      formId,
+  //      sessionId: sid,
+  //      candidateToken: candidateToken ?? null,
+  //	references,
+  //    });
 
-      setSessionId(r.sessionId);
-      setBot(r);
+  //    setSessionId(r.sessionId);
+  //    setBot(r);
 
-      await sleep(randomDelay(r.kind));
-      replaceTypingWithAgent(r.message);
+  //    await sleep(randomDelay(r.kind));
+  //    replaceTypingWithAgent(r.message);
+
+  const r = await postJson<SubmitResponse>("/api/submit", {
+    formId,
+    sessionId: sid,
+    candidateToken: candidateToken ?? null,
+    references,
+  });
+
+  if (!r.success) {
+    throw new Error(r.error ?? "Submit failed");
+  }
+
+  // update UI with a simple confirmation
+  replaceTypingWithAgent(`Submitted. References created: ${r.references_created ?? 0}`);
+
+
+
     } catch (e: any) {
       setThread((prev) => prev.filter((m) => m.role !== "typing"));
       setError(e?.message ?? "Failed to submit");
