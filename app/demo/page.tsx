@@ -63,14 +63,16 @@ async function postJson<T>(path: string, body: any): Promise<T> {
 
 export default function DemoPage(props: any) {
   // --- existing props / params behavior preserved ---
-  const token = props?.candidateToken as string | undefined;
+  const token = (props?.candidateToken ?? props?.referenceToken) as string | undefined;
 
   const [formId, setFormId] = useState<string>(() => {
-    return props?.candidateToken ? "reference" : "demo";
+    if (props?.candidateToken) return "demo";      // candidate fills demo form
+    if (props?.referenceToken) return "reference";  // ref provider fills reference form
+    return "demo";                                  // standalone demo
   });
 
   const [candidateToken, setCandidateToken] = useState<string | null>(
-    props?.candidateToken ?? null
+    token ?? null
   );
 
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -88,7 +90,7 @@ export default function DemoPage(props: any) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const isCandidateFlow = !!candidateToken;
+  const isCandidateFlow = !!props?.candidateToken;
 
   function appendTyping() {
     setThread((prev) => [...prev, { id: uid(), role: "typing" }]);

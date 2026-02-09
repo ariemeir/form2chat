@@ -1,10 +1,9 @@
-import { redirect } from "next/navigation";
+"use client";
 
-export default function Page({
-  params,
-}: {
-  params: { token: string };
-}) {
-  redirect(`/demo?formId=reference&token=${params.token}`);
+import { useParams } from "next/navigation";
+import DemoChat from "@/app/demo/page";
+
+export default function ReferencePage() {
+  const { token } = useParams<{ token: string }>();
+  return <DemoChat referenceToken={token} />;
 }
-
