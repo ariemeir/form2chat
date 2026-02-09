@@ -5,6 +5,7 @@
   --foreground: #171717;
 }
 
+/* Tailwind v4 theme inline tokens */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -19,8 +20,39 @@
   }
 }
 
+/* ---- Mobile polish + overflow kill ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
 body {
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden; /* HARD stop sideways scroll */
+}
+
+body {
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  -webkit-text-size-adjust: 100%;
 }
+
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Prevent “rubber band” feeling horizontally */
+body {
+  overscroll-behavior-x: none;
+}
+
