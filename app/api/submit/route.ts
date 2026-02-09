@@ -1,5 +1,7 @@
 // app/api/submit/route.ts
 
+export const runtime = "nodejs";
+
 function normalizeWouldRehire(v: any): "Yes" | "No" | "Unsure" | "" {
   if (typeof v !== "string") return "";
   const raw = v.trim();
@@ -31,12 +33,18 @@ function canonicalizeReference(raw: Record<string, any>) {
   };
 }
 
-async function callLoveable(url: string, body: Record<string, any>) {
+async function callLoveable(url: string | undefined, body: Record<string, any>) {
+  if (!url) {
+    return Response.json({ error: "Server misconfiguration: missing upstream URL" }, { status: 500 });
+  }
+  if (!process.env.LOVEABLE_ANON_KEY) {
+    return Response.json({ error: "Server misconfiguration: missing API key" }, { status: 500 });
+  }
   const resp = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: process.env.LOVEABLE_ANON_KEY!,
+      apikey: process.env.LOVEABLE_ANON_KEY,
     },
     body: JSON.stringify(body),
   });
@@ -89,7 +97,7 @@ export async function POST(req: Request) {
         }
       }
 
-      return callLoveable(process.env.LOVEABLE_SUBMIT_URL!, {
+      return callLoveable(process.env.LOVEABLE_SUBMIT_URL, {
         candidate_token: candidateToken,
         base_url: process.env.LOVEABLE_BASE_URL!,
         references: canonicalRefs,
@@ -125,7 +133,7 @@ export async function POST(req: Request) {
         );
       }
 
-      return callLoveable(process.env.LOVEABLE_SUBMIT_REFERENCE_URL!, {
+      return callLoveable(process.env.LOVEABLE_SUBMIT_REFERENCE_URL, {
         reference_token: candidateToken,
         how_know,
         care_type,
