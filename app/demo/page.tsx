@@ -66,7 +66,7 @@ export default function DemoPage(props: any) {
   const token = props?.candidateToken as string | undefined;
 
   const [formId, setFormId] = useState<string>(() => {
-    return props?.candidateToken ? "candidate" : "demo";
+    return props?.candidateToken ? "reference" : "demo";
   });
 
   const [candidateToken, setCandidateToken] = useState<string | null>(
@@ -88,7 +88,7 @@ export default function DemoPage(props: any) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const isCandidateFlow = formId === "candidate";
+  const isCandidateFlow = !!candidateToken;
 
   function appendTyping() {
     setThread((prev) => [...prev, { id: uid(), role: "typing" }]);
@@ -179,20 +179,19 @@ export default function DemoPage(props: any) {
       refs.length > 0 ? refs : draft && Object.keys(draft).length > 0 ? [draft] : [];
 
     try {
-      const body =
-        formId === "candidate"
-          ? {
-              formId,
-              sessionId: sid,
-              candidateToken: token ?? null,
-              references,
-            }
-          : {
-              formId,
-              sessionId: sid,
-              candidateToken: token ?? null, // reference token for reference flow (rename later)
-              answers,
-            };
+      const body = isCandidateFlow
+        ? {
+            formId: "candidate",
+            sessionId: sid,
+            candidateToken: token ?? null,
+            references,
+          }
+        : {
+            formId,
+            sessionId: sid,
+            candidateToken: token ?? null,
+            answers,
+          };
 
       const r = await postJson<SubmitResponse>("/api/submit", body);
 
