@@ -89,10 +89,6 @@ export default function DemoPage(props: any) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const isCandidateFlow = formId === "candidate";
-  const isReferenceFlow = formId === "reference";
-  const isDemoFlow = formId === "demo";
-  const isAdminFlow = formId === "admin";
-  const isCandidateOrReference = isCandidateFlow || isReferenceFlow;
 
   function appendTyping() {
     setThread((prev) => [...prev, { id: uid(), role: "typing" }]);
@@ -122,27 +118,18 @@ export default function DemoPage(props: any) {
       setBot(null);
       setSessionId(null);
 
-      // You likely set these elsewhere; keep them as-is if you already have your own flow.
-      // Here we keep the existing behavior but avoid crashing.
-      const effectiveFormId = formId ?? "demo";
-
-      if (!effectiveFormId) {
-        setError("Missing formId in URL");
-        return;
-      }
-
       setIsSending(true);
       appendTyping();
 
       try {
         const r = await postJson<ChatResponse>("/api/chat/start", {
-          formId: effectiveFormId,
+          formId,
           candidateToken: candidateToken ?? null,
         });
 
         if (cancelled) return;
 
-        setSessionId((r as any).sessionId);
+        setSessionId(r.sessionId);
         setBot(r);
 
         await sleep(randomDelay(r.kind));
@@ -173,7 +160,7 @@ export default function DemoPage(props: any) {
   };
 
   async function submit() {
-    const sid = sessionId ?? (bot as any)?.sessionId;
+    const sid = sessionId ?? bot?.sessionId;
     if (!sid) return;
 
     if (sendingRef.current) return;
@@ -224,7 +211,7 @@ export default function DemoPage(props: any) {
   }
 
   async function sendText(text: string) {
-    const sid = sessionId ?? (bot as any)?.sessionId;
+    const sid = sessionId ?? bot?.sessionId;
     if (!sid) return;
 
     if (sendingRef.current) return;
@@ -243,7 +230,7 @@ export default function DemoPage(props: any) {
         candidateToken: candidateToken ?? null,
       });
 
-      setSessionId((r as any).sessionId);
+      setSessionId(r.sessionId);
       setBot(r);
 
       await sleep(randomDelay(r.kind));
@@ -294,7 +281,7 @@ export default function DemoPage(props: any) {
     requestAnimationFrame(() => {
       inputRef.current?.focus();
     });
-  }, [bot?.kind, (bot as any)?.fieldId, (bot as any)?.sessionId, isSending, showFileUpload, thread.length]);
+  }, [bot?.kind, bot?.kind === "ask" ? bot.fieldId : undefined, bot?.sessionId, isSending, showFileUpload, thread.length]);
 
   // Derived “collected so far” (kept as-is)
   const collected: { question: string; answer: string }[] = useMemo(() => {

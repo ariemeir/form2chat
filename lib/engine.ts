@@ -235,7 +235,7 @@ function buildCleanSummary(form: ReturnType<typeof loadForm>, state: EngineState
     const ref = refs[r] || {};
     blocks.push(`Reference ${r + 1}`);
     for (const f of fields) {
-      const label = (f as any).label ?? f.id;
+      const label = f.label;
       const raw = (ref as any)[f.id];
       const val = formatValueForSummary(raw);
       if (val === "") continue;
@@ -255,7 +255,7 @@ function buildCleanSummary(form: ReturnType<typeof loadForm>, state: EngineState
 function buildReviewPayload(form: ReturnType<typeof loadForm>, state: EngineState) {
   return {
     references: state.__refs,
-    fields: form.fields.map((f) => ({ id: f.id, label: (f as any).label ?? f.id })),
+    fields: form.fields.map((f) => ({ id: f.id, label: f.label })),
   };
 }
 
@@ -300,7 +300,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
     sessionId,
     answers_json: state,
     fieldId: field.id,
-    message: `${header}\n\n${(field as any).label ?? field.id}`,
+    message: `${header}\n\n${field.label}`,
     input: hintForField(field),
     progress: { done, total },
   };
@@ -409,7 +409,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
     sessionId: sid,
     answers_json: p.state,
     fieldId: field.id,
-    message: `${header}\n\n${(field as any).label ?? field.id}`,
+    message: `${header}\n\n${field.label}`,
     input: hintForField(field),
     progress: { done: p.done, total: p.total },
   };
