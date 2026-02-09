@@ -63,15 +63,15 @@ async function postJson<T>(path: string, body: any): Promise<T> {
 
 export default function DemoPage(props: any) {
   // --- existing props / params behavior preserved ---
-  const token = props?.params?.token as string | undefined;
+  const token = props?.candidateToken as string | undefined;
 
   const [formId, setFormId] = useState<string>(() => {
-    // Try to infer from pathname or query if you already do that elsewhere
-    // but keep existing behavior if you set it differently.
-    return "demo";
+    return props?.candidateToken ? "candidate" : "demo";
   });
 
-  const [candidateToken, setCandidateToken] = useState<string | null>(null);
+  const [candidateToken, setCandidateToken] = useState<string | null>(
+    props?.candidateToken ?? null
+  );
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [bot, setBot] = useState<ChatResponse | null>(null);
