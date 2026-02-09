@@ -192,7 +192,7 @@ export default function DemoPage(props: any) {
             formId,
             sessionId: sid,
             candidateToken: token ?? null,
-            answers: draft ?? answers,
+            answers: refs[0] ?? draft ?? answers,
           };
 
       const r = await postJson<SubmitResponse>("/api/submit", body);
