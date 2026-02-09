@@ -1,5 +1,8 @@
 // app/api/submit/route.ts
 
+import { POST as submitReferencesHandler } from "../loveable/submit-references/route";
+import { POST as submitReferenceResponseHandler } from "../loveable/submit-reference-response/route";
+
 function normalizeWouldRehire(v: any): "Yes" | "No" | "Unsure" | "" {
   if (typeof v !== "string") return "";
   const raw = v.trim();
@@ -35,27 +38,16 @@ export async function POST(req: Request) {
       return Response.json({ error: "Missing references" }, { status: 400 });
     }
 
-    const upstream = await fetch(
-      new URL("/api/loveable/submit-references", req.url),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          candidate_token: candidateToken,
-          references,
-        }),
-      }
-    );
+    const internalReq = new Request("http://localhost/api/loveable/submit-references", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        candidate_token: candidateToken,
+        references,
+      }),
+    });
 
-    const text = await upstream.text();
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { raw: text };
-    }
-
-    return Response.json(data, { status: upstream.status });
+    return submitReferencesHandler(internalReq);
   }
 
   // Reference-provider flow
@@ -88,32 +80,21 @@ export async function POST(req: Request) {
       );
     }
 
-    const upstream = await fetch(
-      new URL("/api/loveable/submit-reference-response", req.url),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          reference_token: candidateToken,
-          how_know,
-          care_type,
-          duration,
-          would_rehire,
-          concerns,
-          additional_comments,
-        }),
-      }
-    );
+    const internalReq = new Request("http://localhost/api/loveable/submit-reference-response", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reference_token: candidateToken,
+        how_know,
+        care_type,
+        duration,
+        would_rehire,
+        concerns,
+        additional_comments,
+      }),
+    });
 
-    const text = await upstream.text();
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { raw: text };
-    }
-
-    return Response.json(data, { status: upstream.status });
+    return submitReferenceResponseHandler(internalReq);
   }
 
   return Response.json({ error: "Unknown formId", formId }, { status: 400 });
