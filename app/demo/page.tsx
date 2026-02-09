@@ -323,16 +323,20 @@ export default function DemoPage(props: any) {
         .chatPage {
           height: 100dvh;
           width: 100%;
-          background: #fff;
+          max-wdith: 100%;
+	  background: #fff;
+          overflow-x: hidden;
           overflow: hidden; /* prevent sideways “grab” feeling */
         }
 
         .chatShell {
           height: 100dvh;
           width: 100%;
+	  max-width: 100%;
           display: flex;
           flex-direction: column;
           background: #fff;
+          overflow-x: hidden;
           overflow: hidden;
         }
 

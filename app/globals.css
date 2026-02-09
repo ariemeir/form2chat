@@ -27,6 +27,20 @@
   box-sizing: border-box;
 }
 
+
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 100%;
+  touch-action: pan-y; /* prevent horizontal panning */
+}
+
+#___next, main {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 html,
 body {
   height: 100%;
