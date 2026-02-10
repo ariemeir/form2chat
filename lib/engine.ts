@@ -302,8 +302,8 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
 
   const field = form.fields[fieldIndex];
 
-  // Only show "Reference X of Y" header for multi-reference forms
-  const header = totalRefs > 1 ? `Reference ${doneRefs + 1} of ${totalRefs}` : null;
+  // Only show "Reference X of Y" header for the reference form, not the candidate form
+  const header = totalRefs > 1 && form.id === "reference" ? `Reference ${doneRefs + 1} of ${totalRefs}` : null;
 
   // Prepend description as greeting on the very first question
   const prefix = fieldIndex === 0 && doneRefs === 0 && form.description ? form.description : null;

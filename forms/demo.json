@@ -1,7 +1,7 @@
 {
   "id": "demo",
   "title": "Reference POC Collection (Loop Demo)",
-  "description": "Hi {{candidate_name}}! Please provide contact details for your professional references for your position at {{agency_name}}.",
+  "description": "Hi {{candidate_name}}! We need to collect contact details for {{target_count}} professional references for your position at {{agency_name}}. Let's get started!",
   "fields": [
     {
       "id": "ref_name",

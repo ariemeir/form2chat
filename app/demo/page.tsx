@@ -149,9 +149,11 @@ export default function DemoPage(props: any) {
     const cn = referenceInfo?.candidateName || candidateInfo?.candidateName;
     const pn = referenceInfo?.providerName;
     const an = referenceInfo?.agencyName || candidateInfo?.agencyName;
+    const tc = targetCount;
     if (cn) result = result.replace(/\{\{candidate_name\}\}/g, cn);
     if (pn) result = result.replace(/\{\{provider_name\}\}/g, pn);
     if (an) result = result.replace(/\{\{agency_name\}\}/g, an);
+    if (tc) result = result.replace(/\{\{target_count\}\}/g, String(tc));
     return result;
   }
 
