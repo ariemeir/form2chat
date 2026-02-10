@@ -105,14 +105,27 @@ export default function DemoPage(props: any) {
     requiredReferences: number;
   } | null>(null);
 
+  // Track whether the person-info API call has resolved (success or failure)
+  // so we don't start the conversation before names are available.
+  const [personInfoReady, setPersonInfoReady] = useState<boolean>(
+    // No token at all → standalone demo, nothing to fetch
+    !props?.referenceToken && !props?.candidateToken
+  );
+
   useEffect(() => {
     if (!props?.referenceToken) return;
     postJson<{ providerName: string; candidateName: string; agencyName: string }>(
       "/api/reference-info",
       { reference_token: props.referenceToken }
     )
-      .then(setReferenceInfo)
-      .catch(() => {}); // graceful degradation
+      .then((data) => {
+        setReferenceInfo(data);
+        setPersonInfoReady(true);
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch reference-info, using raw template vars:", err);
+        setPersonInfoReady(true);
+      });
   }, [props?.referenceToken]);
 
   useEffect(() => {
@@ -121,8 +134,14 @@ export default function DemoPage(props: any) {
       "/api/candidate-info",
       { candidate_token: props.candidateToken }
     )
-      .then(setCandidateInfo)
-      .catch(() => {}); // graceful degradation
+      .then((data) => {
+        setCandidateInfo(data);
+        setPersonInfoReady(true);
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch candidate-info, using raw template vars:", err);
+        setPersonInfoReady(true);
+      });
   }, [props?.candidateToken]);
 
   function interpolateNames(text: string): string {
@@ -159,8 +178,8 @@ export default function DemoPage(props: any) {
   const targetCount = candidateInfo?.requiredReferences;
 
   useEffect(() => {
-    // In candidate flow, wait until candidateInfo has loaded
-    if (isCandidateFlow && !candidateInfo) return;
+    // Wait until person-info API has resolved (or was skipped for standalone demo)
+    if (!personInfoReady) return;
 
     let cancelled = false;
 
@@ -200,7 +219,7 @@ export default function DemoPage(props: any) {
     return () => {
       cancelled = true;
     };
-  }, [formId, candidateToken, isCandidateFlow, candidateInfo]);
+  }, [formId, candidateToken, personInfoReady]);
 
   type SubmitResponse = {
     success: boolean;
