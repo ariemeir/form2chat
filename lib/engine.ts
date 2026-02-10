@@ -40,6 +40,7 @@ type BaseResponse = {
 export type ChatResponse =
   | (BaseResponse & {
       kind: "ask";
+      field_index: number;
       fieldId: string;
       message: string;
       input: InputHint;
@@ -47,11 +48,12 @@ export type ChatResponse =
     })
   | (BaseResponse & {
       kind: "review";
+      field_index: number;
       message: string;
       answers: Record<string, any>;
       progress: { done: number; total: number };
     })
-  | (BaseResponse & { kind: "done"; message: string });
+  | (BaseResponse & { kind: "done"; field_index: number; message: string });
 
 export type DbSessionRow = {
   id: string;
@@ -70,13 +72,30 @@ export function getSessionRow(sessionId: string): DbSessionRow | undefined {
   return db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as DbSessionRow | undefined;
 }
 
-function upsertSession(sessionId: string, formId: string): DbSessionRow {
-  const s = getSessionRow(sessionId);
-  if (s) return s;
+export type RecoveryState = {
+  fieldIndex: number;
+  answersJson: EngineState;
+};
 
-  db.prepare(
-    "INSERT INTO sessions (id, form_id, field_index, answers_json, status, updated_at) VALUES (?, ?, 0, '{}', 'in_progress', ?)"
-  ).run(sessionId, formId, nowIso());
+function upsertSession(sessionId: string, formId: string, recoveryState?: RecoveryState): DbSessionRow {
+  const s = getSessionRow(sessionId);
+  if (s) {
+    console.log("SESSION HIT", sessionId, "field_index:", s.field_index);
+    return s;
+  }
+
+  // Session not found — either brand-new or lost due to instance change
+  if (recoveryState) {
+    console.log("SESSION MISS — recovering", sessionId, "field_index:", recoveryState.fieldIndex);
+    db.prepare(
+      "INSERT INTO sessions (id, form_id, field_index, answers_json, status, updated_at) VALUES (?, ?, ?, ?, 'in_progress', ?)"
+    ).run(sessionId, formId, recoveryState.fieldIndex, JSON.stringify(recoveryState.answersJson), nowIso());
+  } else {
+    console.log("SESSION MISS — creating new", sessionId);
+    db.prepare(
+      "INSERT INTO sessions (id, form_id, field_index, answers_json, status, updated_at) VALUES (?, ?, 0, '{}', 'in_progress', ?)"
+    ).run(sessionId, formId, nowIso());
+  }
 
   return getSessionRow(sessionId)!;
 }
@@ -272,6 +291,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
     const summary = buildCleanSummary(form, state);
     return {
       kind: "review",
+      field_index: fieldIndex,
       sessionId,
       answers_json: state,
       message: `To quickly review, does everything look right?\n\n${summary}`,
@@ -286,6 +306,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
   if (field.type === "file") {
     return {
       kind: "ask",
+      field_index: fieldIndex,
       sessionId,
       answers_json: state,
       fieldId: field.id,
@@ -297,6 +318,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
 
   return {
     kind: "ask",
+    field_index: fieldIndex,
     sessionId,
     answers_json: state,
     fieldId: field.id,
@@ -367,6 +389,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
     const state = parseState(session.answers_json);
     return {
       kind: "done",
+      field_index: Number(session.field_index ?? 0),
       sessionId: sid,
       answers_json: state,
       message: "This conversation is already submitted. Thanks!",
@@ -381,6 +404,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
     const summary = buildCleanSummary(form, p.state);
     return {
       kind: "review",
+      field_index: idx,
       sessionId: sid,
       answers_json: p.state,
       message: `To quickly review, does everything look right?\n\n${summary}`,
@@ -395,6 +419,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
   if (field.type === "file") {
     return {
       kind: "ask",
+      field_index: idx,
       sessionId: sid,
       answers_json: p.state,
       fieldId: field.id,
@@ -406,6 +431,7 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
 
   return {
     kind: "ask",
+    field_index: idx,
     sessionId: sid,
     answers_json: p.state,
     fieldId: field.id,
@@ -415,9 +441,9 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
   };
 }
 
-export function handleUserMessage(formId: string, sessionId: string, userText: string): ChatResponse {
+export function handleUserMessage(formId: string, sessionId: string, userText: string, recoveryState?: RecoveryState): ChatResponse {
   const form = loadForm(formId);
-  const session = upsertSession(sessionId, formId);
+  const session = upsertSession(sessionId, formId, recoveryState);
 
   dlog("ENGINE before", {
     formId,
@@ -448,6 +474,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
     const summary = buildCleanSummary(form, state);
     return {
       kind: "review",
+      field_index: p.fieldIndex,
       sessionId,
       answers_json: state,
       message: `To quickly review, does everything look right?\n\n${summary}`,
@@ -463,6 +490,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
     dlog("ENGINE after file");
     return {
       kind: "ask",
+      field_index: i,
       sessionId,
       answers_json: state,
       fieldId: field.id,
@@ -477,6 +505,7 @@ export function handleUserMessage(formId: string, sessionId: string, userText: s
     dlog("ENGINE after validate");
     return {
       kind: "ask",
+      field_index: i,
       sessionId,
       answers_json: state,
       fieldId: field.id,
@@ -610,7 +639,7 @@ function commitDraftIfComplete(form: ReturnType<typeof loadForm>, state: EngineS
 export function submitSession(formId: string, sessionId: string): ChatResponse {
   const session = getSessionRow(sessionId);
   if (!session) {
-    return { kind: "done", sessionId, answers_json: { __refs: [], __draft: {} }, message: "Session not found." };
+    return { kind: "done", field_index: 0, sessionId, answers_json: { __refs: [], __draft: {} }, message: "Session not found." };
   }
 
   const form = loadForm(formId);
@@ -634,9 +663,10 @@ export function submitSession(formId: string, sessionId: string): ChatResponse {
   const summary = buildCleanSummary(form, state);
   return {
     kind: "done",
+    field_index: p.fieldIndex,
     sessionId,
     answers_json: state,
-    message: `Submitted. Here’s the information you provided:\n\n${summary}`,
+    message: `Submitted. Here's the information you provided:\n\n${summary}`,
   };
 }
 

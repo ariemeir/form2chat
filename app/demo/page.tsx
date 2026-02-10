@@ -13,19 +13,23 @@ type ChatResponse =
   | {
       kind: "ask";
       sessionId: string;
+      field_index: number;
       fieldId: string;
       message: string;
       input: InputHint;
+      answers_json: any;
       progress: { done: number; total: number };
     }
   | {
       kind: "review";
       sessionId: string;
+      field_index: number;
       message: string;
       answers: any;
+      answers_json: any;
       progress: { done: number; total: number };
     }
-  | { kind: "done"; sessionId: string; message: string };
+  | { kind: "done"; sessionId: string; field_index: number; message: string; answers_json: any };
 
 type ThreadMsg =
   | { id: string; role: "agent"; text: string }
@@ -229,6 +233,8 @@ export default function DemoPage(props: any) {
         sessionId: sid,
         text,
         candidateToken: candidateToken ?? null,
+        fieldIndex: bot?.field_index,
+        answersJson: bot?.answers_json,
       });
 
       setSessionId(r.sessionId);
