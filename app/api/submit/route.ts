@@ -97,7 +97,7 @@ export async function POST(req: Request) {
         }
       }
 
-      console.log("LOVEABLE URL:", process.env.LOVEABLE_SUBMIT_URL);
+      console.log("1 LOVEABLE URL:", process.env.LOVEABLE_SUBMIT_URL);
       return callLoveable(process.env.LOVEABLE_SUBMIT_URL, {
         candidate_token: candidateToken,
         base_url: process.env.LOVEABLE_BASE_URL!,
@@ -134,7 +134,7 @@ export async function POST(req: Request) {
         );
       }
 
-      console.log("LOVEABLE URL:", process.env.LOVEABLE_SUBMIT_REFERENCE_URL);
+      console.log("2 LOVEABLE URL:", process.env.LOVEABLE_SUBMIT_REFERENCE_URL);
       return callLoveable(process.env.LOVEABLE_SUBMIT_REFERENCE_URL, {
         reference_token: candidateToken,
         how_know,
