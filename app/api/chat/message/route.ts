@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
 
-  const { formId, sessionId, text, candidateToken, fieldIndex, answersJson } = body || {};
+  const { formId, sessionId, text, candidateToken, fieldIndex, answersJson, targetCount } = body || {};
 
   if (!formId || !sessionId) {
     return NextResponse.json(
@@ -32,7 +32,8 @@ export async function POST(req: Request) {
     recoveryState = { fieldIndex, answersJson };
   }
 
-  const result = handleUserMessage(formId, sessionId, String(text ?? ""), recoveryState);
+  const opts = typeof targetCount === "number" ? { targetCount } : undefined;
+  const result = handleUserMessage(formId, sessionId, String(text ?? ""), recoveryState, opts);
   return NextResponse.json(result);
 }
 

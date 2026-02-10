@@ -87,14 +87,54 @@ export default function DemoPage(props: any) {
   const [isSending, setIsSending] = useState(false);
   const sendingRef = useRef(false);
 
-  const [restartNonce, setRestartNonce] = useState(0);
-
-  const [showCollected, setShowCollected] = useState(false);
-
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const isCandidateFlow = !!props?.candidateToken;
+
+  // --- Personalization: fetch real names from APIs ---
+  const [referenceInfo, setReferenceInfo] = useState<{
+    providerName: string;
+    candidateName: string;
+    agencyName: string;
+  } | null>(null);
+
+  const [candidateInfo, setCandidateInfo] = useState<{
+    candidateName: string;
+    agencyName: string;
+    requiredReferences: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!props?.referenceToken) return;
+    postJson<{ providerName: string; candidateName: string; agencyName: string }>(
+      "/api/reference-info",
+      { reference_token: props.referenceToken }
+    )
+      .then(setReferenceInfo)
+      .catch(() => {}); // graceful degradation
+  }, [props?.referenceToken]);
+
+  useEffect(() => {
+    if (!props?.candidateToken) return;
+    postJson<{ candidateName: string; agencyName: string; requiredReferences: number }>(
+      "/api/candidate-info",
+      { candidate_token: props.candidateToken }
+    )
+      .then(setCandidateInfo)
+      .catch(() => {}); // graceful degradation
+  }, [props?.candidateToken]);
+
+  function interpolateNames(text: string): string {
+    let result = text;
+    const cn = referenceInfo?.candidateName || candidateInfo?.candidateName;
+    const pn = referenceInfo?.providerName;
+    const an = referenceInfo?.agencyName || candidateInfo?.agencyName;
+    if (cn) result = result.replace(/\{\{candidate_name\}\}/g, cn);
+    if (pn) result = result.replace(/\{\{provider_name\}\}/g, pn);
+    if (an) result = result.replace(/\{\{agency_name\}\}/g, an);
+    return result;
+  }
 
   function appendTyping() {
     setThread((prev) => [...prev, { id: uid(), role: "typing" }]);
@@ -112,10 +152,16 @@ export default function DemoPage(props: any) {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [thread.length, showCollected]);
+  }, [thread.length]);
 
-  // --- start conversation on load (existing logic preserved) ---
+  // --- start conversation on load ---
+  // For candidate flow, wait for candidateInfo so targetCount is available.
+  const targetCount = candidateInfo?.requiredReferences;
+
   useEffect(() => {
+    // In candidate flow, wait until candidateInfo has loaded
+    if (isCandidateFlow && !candidateInfo) return;
+
     let cancelled = false;
 
     async function start() {
@@ -131,6 +177,7 @@ export default function DemoPage(props: any) {
         const r = await postJson<ChatResponse>("/api/chat/start", {
           formId,
           candidateToken: candidateToken ?? null,
+          targetCount,
         });
 
         if (cancelled) return;
@@ -153,11 +200,7 @@ export default function DemoPage(props: any) {
     return () => {
       cancelled = true;
     };
-  }, [formId, restartNonce, candidateToken]);
-
-  function restartFromBeginning() {
-    setRestartNonce((n) => n + 1);
-  }
+  }, [formId, candidateToken, isCandidateFlow, candidateInfo]);
 
   type SubmitResponse = {
     success: boolean;
@@ -235,6 +278,7 @@ export default function DemoPage(props: any) {
         candidateToken: candidateToken ?? null,
         fieldIndex: bot?.field_index,
         answersJson: bot?.answers_json,
+        targetCount,
       });
 
       setSessionId(r.sessionId);
@@ -289,19 +333,6 @@ export default function DemoPage(props: any) {
       inputRef.current?.focus();
     });
   }, [bot?.kind, bot?.kind === "ask" ? bot.fieldId : undefined, bot?.sessionId, isSending, showFileUpload, thread.length]);
-
-  // Derived “collected so far” (kept as-is)
-  const collected: { question: string; answer: string }[] = useMemo(() => {
-    const answers = (bot as any)?.answers_json ?? {};
-    const pairs: { question: string; answer: string }[] = [];
-    if (answers && typeof answers === "object") {
-      for (const [k, v] of Object.entries(answers)) {
-        if (k.startsWith("__")) continue;
-        pairs.push({ question: k, answer: String(v ?? "") });
-      }
-    }
-    return pairs;
-  }, [bot]);
 
   return (
     <div className="chatPage">
@@ -362,51 +393,7 @@ export default function DemoPage(props: any) {
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <button
-              type="button"
-              onClick={() => setShowCollected((v) => !v)}
-              style={styles.smallBtn}
-              disabled={collected.length === 0}
-            >
-              {showCollected ? "Hide" : "Collected"}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void sendText("back")}
-              style={styles.smallBtn}
-              disabled={isSending}
-            >
-              Back
-            </button>
-
-            {!isCandidateFlow && (
-              <button
-                type="button"
-                onClick={restartFromBeginning}
-                style={styles.smallBtn}
-                disabled={isSending}
-              >
-                Restart
-              </button>
-            )}
-          </div>
         </div>
-
-        {showCollected && collected.length > 0 && (
-          <div style={styles.collected}>
-            <div style={styles.collectedTitle}>Collected so far</div>
-            <div style={styles.collectedList}>
-              {collected.slice(-8).map((p, idx) => (
-                <div key={idx} style={styles.collectedRow}>
-                  <div style={styles.collectedQ}>{p.question}</div>
-                  <div style={styles.collectedA}>{p.answer}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         <div ref={scrollRef} style={styles.thread}>
           {thread.map((m) => {
@@ -427,7 +414,7 @@ export default function DemoPage(props: any) {
               return (
                 <div key={m.id} style={styles.agentRow}>
                   <div style={styles.avatarSmall}>A</div>
-                  <div style={styles.agentBubble}>{m.text}</div>
+                  <div style={styles.agentBubble}>{interpolateNames(m.text)}</div>
                 </div>
               );
             }
@@ -449,12 +436,6 @@ export default function DemoPage(props: any) {
               <button type="button" onClick={() => void submit()} style={styles.sendBtn} disabled={isSending}>
                 Submit
               </button>
-
-              {!isCandidateFlow && (
-                <button type="button" onClick={restartFromBeginning} style={styles.smallBtn} disabled={isSending}>
-                  Restart
-                </button>
-              )}
             </div>
           ) : isDone ? (
             <div style={styles.subtle}>Done</div>
@@ -607,43 +588,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#999",
     marginRight: 6,
     animation: "dotFade 1.2s infinite ease-in-out",
-  },
-  collected: {
-    borderBottom: "1px solid #eee",
-    background: "#fff",
-    padding: "10px 16px",
-    maxHeight: 160,
-    overflowY: "auto",
-    overflowX: "hidden",
-  },
-  collectedTitle: {
-    fontSize: 12,
-    fontWeight: 800,
-    marginBottom: 8,
-    color: "#333",
-  },
-  collectedList: {
-    display: "grid",
-    gap: 8,
-  },
-  collectedRow: {
-    display: "grid",
-    gap: 2,
-    padding: "8px 10px",
-    borderRadius: 12,
-    background: "#f7f7f7",
-    border: "1px solid #eee",
-  },
-  collectedQ: {
-    fontSize: 12,
-    color: "#666",
-    overflowWrap: "anywhere",
-  },
-  collectedA: {
-    fontSize: 13,
-    color: "#111",
-    fontWeight: 700,
-    overflowWrap: "anywhere",
   },
   footer: {
     display: "flex",

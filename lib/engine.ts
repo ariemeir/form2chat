@@ -301,20 +301,18 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
   }
 
   const field = form.fields[fieldIndex];
-  const header = `Reference ${doneRefs + 1} of ${totalRefs}`;
 
-  if (field.type === "file") {
-    return {
-      kind: "ask",
-      field_index: fieldIndex,
-      sessionId,
-      answers_json: state,
-      fieldId: field.id,
-      message: `${header}\n\nPlease upload the file using the upload button below.`,
-      input: hintForField(field),
-      progress: { done, total },
-    };
-  }
+  // Only show "Reference X of Y" header for multi-reference forms
+  const header = totalRefs > 1 ? `Reference ${doneRefs + 1} of ${totalRefs}` : null;
+
+  // Prepend description as greeting on the very first question
+  const prefix = fieldIndex === 0 && doneRefs === 0 && form.description ? form.description : null;
+
+  const fieldLabel = field.type === "file"
+    ? "Please upload the file using the upload button below."
+    : field.label;
+
+  const message = [header, prefix, fieldLabel].filter(Boolean).join("\n\n");
 
   return {
     kind: "ask",
@@ -322,7 +320,7 @@ function responseFromState(form: ReturnType<typeof loadForm>, sessionId: string,
     sessionId,
     answers_json: state,
     fieldId: field.id,
-    message: `${header}\n\n${field.label}`,
+    message,
     input: hintForField(field),
     progress: { done, total },
   };
@@ -380,8 +378,12 @@ function goBackOne(formId: string, sessionId: string): ChatResponse {
   return startOrContinue(formId, sessionId);
 }
 
-export function startOrContinue(formId: string, sessionId?: string): ChatResponse {
+export type EngineOptions = { targetCount?: number };
+
+export function startOrContinue(formId: string, sessionId?: string, options?: EngineOptions): ChatResponse {
   const form = loadForm(formId);
+  if (options?.targetCount) form.targetCount = options.targetCount;
+
   const sid = sessionId ?? crypto.randomUUID();
   const session = upsertSession(sid, formId);
 
@@ -413,36 +415,13 @@ export function startOrContinue(formId: string, sessionId?: string): ChatRespons
     };
   }
 
-  const field = form.fields[idx];
-  const header = `Reference ${currentRefNumber(p)} of ${p.totalRefs}`;
-
-  if (field.type === "file") {
-    return {
-      kind: "ask",
-      field_index: idx,
-      sessionId: sid,
-      answers_json: p.state,
-      fieldId: field.id,
-      message: `${header}\n\nPlease upload the file using the upload button below.`,
-      input: hintForField(field),
-      progress: { done: p.done, total: p.total },
-    };
-  }
-
-  return {
-    kind: "ask",
-    field_index: idx,
-    sessionId: sid,
-    answers_json: p.state,
-    fieldId: field.id,
-    message: `${header}\n\n${field.label}`,
-    input: hintForField(field),
-    progress: { done: p.done, total: p.total },
-  };
+  // Delegate to shared response builder (handles description greeting + conditional header)
+  return responseFromState(form, sid, p.state, idx);
 }
 
-export function handleUserMessage(formId: string, sessionId: string, userText: string, recoveryState?: RecoveryState): ChatResponse {
+export function handleUserMessage(formId: string, sessionId: string, userText: string, recoveryState?: RecoveryState, options?: EngineOptions): ChatResponse {
   const form = loadForm(formId);
+  if (options?.targetCount) form.targetCount = options.targetCount;
   const session = upsertSession(sessionId, formId, recoveryState);
 
   dlog("ENGINE before", {

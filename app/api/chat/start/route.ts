@@ -16,11 +16,9 @@ export async function POST(req: Request) {
   }
 
   const candidateToken = (body as any)?.candidateToken ?? null;
+  const targetCount = typeof (body as any)?.targetCount === "number" ? (body as any).targetCount : undefined;
 
-  // For now we just pass through to engine.
-  // If you later bind sessions to candidateToken (recommended),
-  // you’ll store { sessionId, candidateToken } server-side here.
-  const result = startOrContinue(formId);
+  const result = startOrContinue(formId, undefined, targetCount ? { targetCount } : undefined);
 
   return NextResponse.json({
     ...result,

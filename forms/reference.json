@@ -1,7 +1,7 @@
 {
   "id": "reference",
   "title": "Reference for {{candidate_name}}",
-  "description": "{{candidate_name}} has listed you as a professional reference for a position at {{agency_name}}. This should take about 5 minutes.",
+  "description": "Hi {{provider_name}}! {{candidate_name}} has listed you as a professional reference for a position at {{agency_name}}. This should take about 5 minutes.",
   "fields": [
     {
       "id": "how_do_you_know_candidate",

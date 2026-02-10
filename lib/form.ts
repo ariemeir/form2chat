@@ -40,6 +40,7 @@ export type Field =
 export type FormDef = {
   id: string;
   title?: string;
+  description?: string;
   targetCount?: number; // NEW: how many references to collect
   fields: Field[];
 };
